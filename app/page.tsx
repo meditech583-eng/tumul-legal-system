@@ -1,4 +1,5 @@
 "use client";
+import { branding } from "./config/branding";
 console.log("TEST ENV:", process.env.TEST_VAR);
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./lib/supabase/client";
@@ -497,12 +498,16 @@ export default function TumulLegalV3() {
       <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(34,211,238,0.16),_transparent_25%),radial-gradient(circle_at_top_right,_rgba(59,130,246,0.14),_transparent_22%),linear-gradient(160deg,#020617_0%,#0f172a_42%,#111827_100%)] px-4 py-10 text-white">
         <div className="mx-auto max-w-md">
           <div className={`${glassCard} p-8`}>
-            <p className="text-xs font-semibold uppercase tracking-[0.35em] text-cyan-300/80">
-              Meditech IT Services
-            </p>
-            <h1 className="mt-3 text-3xl font-bold">Tumul Legal V3</h1>
+          <p className="text-xs font-semibold uppercase tracking text-cyan-400">
+  {branding.tagline}
+</p>
+            <h1>{branding.platformName}</h1>
+
+<p className="text-sm text-slate-400">
+  Client: {branding.clientName}
+</p>
             <p className="mt-2 text-sm text-slate-400">
-              Secure legal practice login
+            {branding.clientName} System Access
             </p>
 
             <div className="mt-6 flex gap-2">
