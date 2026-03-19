@@ -1,6 +1,6 @@
 "use client";
+
 import { branding } from "./config/branding";
-console.log("TEST ENV:", process.env.TEST_VAR);
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./lib/supabase/client";
 
@@ -196,7 +196,9 @@ export default function TumulLegalV3() {
       return;
     }
 
-    setAuthMessage("Signup successful. Check your email if confirmation is required.");
+    setAuthMessage(
+      "Signup successful. Check your email if confirmation is required."
+    );
     setLoading(false);
   };
 
@@ -241,7 +243,10 @@ export default function TumulLegalV3() {
   const totalMatters = matters.length;
   const openMatters = matters.filter((m) => m.status !== "Closed").length;
   const totalClients = clients.length;
-  const totalInvoiceValue = invoices.reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0);
+  const totalInvoiceValue = invoices.reduce(
+    (sum, invoice) => sum + Number(invoice.amount || 0),
+    0
+  );
   const outstandingValue = invoices
     .filter((invoice) => invoice.status !== "Paid")
     .reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0);
@@ -249,7 +254,9 @@ export default function TumulLegalV3() {
     .filter((invoice) => invoice.status === "Paid")
     .reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0);
   const urgentMatters = matters.filter((m) => m.priority === "High").length;
-  const upcomingCourtDates = matters.filter((m) => m.court_date && m.status !== "Closed").length;
+  const upcomingCourtDates = matters.filter(
+    (m) => m.court_date && m.status !== "Closed"
+  ).length;
 
   const matterStatusSummary = useMemo(() => {
     return [
@@ -383,7 +390,8 @@ export default function TumulLegalV3() {
       amount: Number(invoiceForm.amount),
       status: invoiceForm.status,
       due_date: invoiceForm.due_date || null,
-      issued_date: invoiceForm.issued_date || new Date().toISOString().slice(0, 10),
+      issued_date:
+        invoiceForm.issued_date || new Date().toISOString().slice(0, 10),
     });
 
     if (error) {
@@ -479,7 +487,9 @@ export default function TumulLegalV3() {
     subtext: string;
   }) => (
     <div className={`${glassCard} p-5`}>
-      <p className="text-xs uppercase tracking-[0.18em] text-slate-400">{label}</p>
+      <p className="text-xs uppercase tracking-[0.18em] text-slate-400">
+        {label}
+      </p>
       <h3 className="mt-3 text-3xl font-bold text-white">{value}</h3>
       <p className="mt-2 text-sm text-slate-400">{subtext}</p>
     </div>
@@ -495,71 +505,104 @@ export default function TumulLegalV3() {
 
   if (!session) {
     return (
-      <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(34,211,238,0.16),_transparent_25%),radial-gradient(circle_at_top_right,_rgba(59,130,246,0.14),_transparent_22%),linear-gradient(160deg,#020617_0%,#0f172a_42%,#111827_100%)] px-4 py-10 text-white">
+      <div className="min-h-screen bg-[radial-gradient(circle_at_top,#0f274f_0%,#07152c_45%,#030b18_100%)] px-4 py-10 text-white">
         <div className="mx-auto max-w-md">
           <div className={`${glassCard} p-8`}>
-          <p className="text-xs font-semibold uppercase tracking text-cyan-400">
-  {branding.tagline}
-</p>
-            <h1>{branding.platformName}</h1>
+            <div className="mb-8">
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-cyan-400">
+                {branding.platformName || "MTEC"}
+              </p>
 
-<p className="text-sm text-slate-400">
-  Client: {branding.clientName}
-</p>
-            <p className="mt-2 text-sm text-slate-400">
-            {branding.clientName} System Access
-            </p>
+              <h1 className="mt-2 text-3xl font-bold tracking-tight text-white">
+                MTEC – {branding.clientName || "Tumul Legal"}
+              </h1>
 
-            <div className="mt-6 flex gap-2">
+              <p className="mt-2 text-base text-slate-300">
+                Legal Management System
+              </p>
+
+              <p className="mt-3 text-sm text-slate-400">
+                Secure access for authorized staff only
+              </p>
+            </div>
+
+            <div className="mb-6 grid grid-cols-2 gap-3 rounded-2xl bg-white/5 p-1">
               <button
-                onClick={() => setAuthMode("login")}
-                className={`flex-1 rounded-2xl px-4 py-3 font-semibold ${
+                onClick={() => {
+                  setAuthMode("login");
+                  setAuthMessage("");
+                }}
+                className={`rounded-xl py-3 text-base font-semibold transition ${
                   authMode === "login"
-                    ? "bg-cyan-400 text-slate-950"
-                    : "bg-white/5 text-white"
+                    ? "bg-cyan-400 text-slate-950 shadow-lg"
+                    : "bg-transparent text-white hover:bg-white/10"
                 }`}
               >
                 Login
               </button>
+
               <button
-                onClick={() => setAuthMode("signup")}
-                className={`flex-1 rounded-2xl px-4 py-3 font-semibold ${
+                onClick={() => {
+                  setAuthMode("signup");
+                  setAuthMessage("");
+                }}
+                className={`rounded-xl py-3 text-base font-semibold transition ${
                   authMode === "signup"
-                    ? "bg-cyan-400 text-slate-950"
-                    : "bg-white/5 text-white"
+                    ? "bg-cyan-400 text-slate-950 shadow-lg"
+                    : "bg-transparent text-white hover:bg-white/10"
                 }`}
               >
                 Sign Up
               </button>
             </div>
 
-            <form onSubmit={handleAuth} className="mt-6 space-y-4">
-              <input
-                type="email"
-                placeholder="Email address"
-                className={inputClass}
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-              />
-              <input
-                type="password"
-                placeholder="Password"
-                className={inputClass}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
+            <form onSubmit={handleAuth} className="space-y-4">
+              <div>
+                <label className="mb-2 block text-sm text-slate-300">
+                  Email
+                </label>
+                <input
+                  type="email"
+                  placeholder="Enter email address"
+                  className={inputClass}
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm text-slate-300">
+                  Password
+                </label>
+                <input
+                  type="password"
+                  placeholder="Enter password"
+                  className={inputClass}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                />
+              </div>
+
+              {authMessage && (
+                <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/10 px-4 py-3 text-sm text-cyan-200">
+                  {authMessage}
+                </div>
+              )}
 
               <button
                 type="submit"
-                className="w-full rounded-2xl bg-gradient-to-r from-cyan-400 to-blue-500 px-4 py-3 font-semibold text-slate-950"
+                disabled={loading}
+                className="w-full rounded-2xl bg-gradient-to-r from-cyan-400 to-blue-500 px-4 py-3 font-semibold text-slate-950 transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-70"
               >
-                {authMode === "login" ? "Login to System" : "Create Account"}
+                {loading
+                  ? "Please wait..."
+                  : authMode === "login"
+                  ? "Login to System"
+                  : "Create Account"}
               </button>
             </form>
-
-            {authMessage && (
-              <p className="mt-4 text-sm text-slate-300">{authMessage}</p>
-            )}
           </div>
         </div>
       </div>
@@ -572,11 +615,13 @@ export default function TumulLegalV3() {
         <aside className="w-full border-b border-white/10 bg-slate-950/60 px-4 py-5 backdrop-blur-xl lg:w-80 lg:border-b-0 lg:border-r">
           <div className="mb-6 px-2">
             <p className="text-xs font-semibold uppercase tracking-[0.35em] text-cyan-300/80">
-              Meditech IT Services
+              {branding.platformName || "MTEC"}
             </p>
-            <h1 className="mt-3 text-3xl font-bold text-white">Tumul Legal V3</h1>
+            <h1 className="mt-3 text-3xl font-bold text-white">
+              {branding.clientName || "Tumul Legal"}
+            </h1>
             <p className="mt-2 text-sm text-slate-400">
-              Database + Login Enabled
+              Legal Management System
             </p>
           </div>
 
@@ -601,11 +646,15 @@ export default function TumulLegalV3() {
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-sm text-slate-300">Urgent Matters</span>
-                <span className="text-sm font-bold text-white">{urgentMatters}</span>
+                <span className="text-sm font-bold text-white">
+                  {urgentMatters}
+                </span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-sm text-slate-300">Clients</span>
-                <span className="text-sm font-bold text-white">{totalClients}</span>
+                <span className="text-sm font-bold text-white">
+                  {totalClients}
+                </span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-sm text-slate-300">Outstanding</span>
@@ -629,7 +678,7 @@ export default function TumulLegalV3() {
             <div className="flex flex-col gap-5 p-6 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <p className="text-sm font-medium text-cyan-300/80">
-                  Welcome to Tumul Legal
+                  Welcome to {branding.clientName || "Tumul Legal"}
                 </p>
                 <h2 className="mt-1 text-3xl font-bold text-white">
                   Legal Operations Control Panel
@@ -641,20 +690,36 @@ export default function TumulLegalV3() {
 
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                  <p className="text-xs uppercase tracking-wide text-slate-400">Matters</p>
-                  <p className="mt-2 text-xl font-bold text-white">{totalMatters}</p>
+                  <p className="text-xs uppercase tracking-wide text-slate-400">
+                    Matters
+                  </p>
+                  <p className="mt-2 text-xl font-bold text-white">
+                    {totalMatters}
+                  </p>
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                  <p className="text-xs uppercase tracking-wide text-slate-400">Court Dates</p>
-                  <p className="mt-2 text-xl font-bold text-white">{upcomingCourtDates}</p>
+                  <p className="text-xs uppercase tracking-wide text-slate-400">
+                    Court Dates
+                  </p>
+                  <p className="mt-2 text-xl font-bold text-white">
+                    {upcomingCourtDates}
+                  </p>
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                  <p className="text-xs uppercase tracking-wide text-slate-400">Clients</p>
-                  <p className="mt-2 text-xl font-bold text-white">{totalClients}</p>
+                  <p className="text-xs uppercase tracking-wide text-slate-400">
+                    Clients
+                  </p>
+                  <p className="mt-2 text-xl font-bold text-white">
+                    {totalClients}
+                  </p>
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
-                  <p className="text-xs uppercase tracking-wide text-slate-400">Today</p>
-                  <p className="mt-2 text-sm font-bold text-white">{new Date().toLocaleDateString()}</p>
+                  <p className="text-xs uppercase tracking-wide text-slate-400">
+                    Today
+                  </p>
+                  <p className="mt-2 text-sm font-bold text-white">
+                    {new Date().toLocaleDateString()}
+                  </p>
                 </div>
               </div>
             </div>
@@ -663,10 +728,26 @@ export default function TumulLegalV3() {
           {activeTab === "dashboard" && (
             <div className="space-y-6">
               <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-                <StatCard label="Total Matters" value={totalMatters} subtext="All legal files in database" />
-                <StatCard label="Active Clients" value={totalClients} subtext="Client records saved online" />
-                <StatCard label="Outstanding Billing" value={currency(outstandingValue)} subtext="Unpaid and part paid invoices" />
-                <StatCard label="Collected Value" value={currency(collectedValue)} subtext="Invoices marked as paid" />
+                <StatCard
+                  label="Total Matters"
+                  value={totalMatters}
+                  subtext="All legal files in database"
+                />
+                <StatCard
+                  label="Active Clients"
+                  value={totalClients}
+                  subtext="Client records saved online"
+                />
+                <StatCard
+                  label="Outstanding Billing"
+                  value={currency(outstandingValue)}
+                  subtext="Unpaid and part paid invoices"
+                />
+                <StatCard
+                  label="Collected Value"
+                  value={currency(collectedValue)}
+                  subtext="Invoices marked as paid"
+                />
               </section>
 
               <section className="grid grid-cols-1 gap-6 xl:grid-cols-3">
@@ -689,16 +770,27 @@ export default function TumulLegalV3() {
                       </thead>
                       <tbody>
                         {matters.slice(0, 6).map((matter) => (
-                          <tr key={matter.id} className="border-b border-white/5 text-slate-200">
-                            <td className="px-3 py-4 font-semibold">{matter.matter_no}</td>
+                          <tr
+                            key={matter.id}
+                            className="border-b border-white/5 text-slate-200"
+                          >
+                            <td className="px-3 py-4 font-semibold">
+                              {matter.matter_no}
+                            </td>
                             <td className="px-3 py-4">{matter.client_name}</td>
                             <td className="px-3 py-4">{matter.case_type}</td>
                             <td className="px-3 py-4">
-                              <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getStatusClass(matter.status)}`}>
+                              <span
+                                className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getStatusClass(
+                                  matter.status
+                                )}`}
+                              >
                                 {matter.status}
                               </span>
                             </td>
-                            <td className="px-3 py-4">{matter.court_date || "Not set"}</td>
+                            <td className="px-3 py-4">
+                              {matter.court_date || "Not set"}
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -713,9 +805,16 @@ export default function TumulLegalV3() {
                   </div>
                   <div className="space-y-3">
                     {matterStatusSummary.map((item) => (
-                      <div key={item.status} className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
-                        <span className="text-sm text-slate-200">{item.status}</span>
-                        <span className="text-base font-bold text-white">{item.count}</span>
+                      <div
+                        key={item.status}
+                        className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-3"
+                      >
+                        <span className="text-sm text-slate-200">
+                          {item.status}
+                        </span>
+                        <span className="text-base font-bold text-white">
+                          {item.count}
+                        </span>
                       </div>
                     ))}
                   </div>
@@ -733,10 +832,49 @@ export default function TumulLegalV3() {
                 </div>
 
                 <div className="space-y-3">
-                  <input value={matterForm.matter_no} onChange={(e) => setMatterForm({ ...matterForm, matter_no: e.target.value })} placeholder="Matter Number" className={inputClass} />
-                  <input value={matterForm.client_name} onChange={(e) => setMatterForm({ ...matterForm, client_name: e.target.value })} placeholder="Client Name" className={inputClass} />
-                  <input value={matterForm.case_type} onChange={(e) => setMatterForm({ ...matterForm, case_type: e.target.value })} placeholder="Case Type" className={inputClass} />
-                  <select value={matterForm.status} onChange={(e) => setMatterForm({ ...matterForm, status: e.target.value as MatterStatus })} className={inputClass}>
+                  <input
+                    value={matterForm.matter_no}
+                    onChange={(e) =>
+                      setMatterForm({
+                        ...matterForm,
+                        matter_no: e.target.value,
+                      })
+                    }
+                    placeholder="Matter Number"
+                    className={inputClass}
+                  />
+                  <input
+                    value={matterForm.client_name}
+                    onChange={(e) =>
+                      setMatterForm({
+                        ...matterForm,
+                        client_name: e.target.value,
+                      })
+                    }
+                    placeholder="Client Name"
+                    className={inputClass}
+                  />
+                  <input
+                    value={matterForm.case_type}
+                    onChange={(e) =>
+                      setMatterForm({
+                        ...matterForm,
+                        case_type: e.target.value,
+                      })
+                    }
+                    placeholder="Case Type"
+                    className={inputClass}
+                  />
+                  <select
+                    value={matterForm.status}
+                    onChange={(e) =>
+                      setMatterForm({
+                        ...matterForm,
+                        status: e.target.value as MatterStatus,
+                      })
+                    }
+                    className={inputClass}
+                  >
                     <option className="bg-slate-900">Open</option>
                     <option className="bg-slate-900">In Progress</option>
                     <option className="bg-slate-900">Pending Filing</option>
@@ -744,16 +882,69 @@ export default function TumulLegalV3() {
                     <option className="bg-slate-900">Awaiting Client</option>
                     <option className="bg-slate-900">Closed</option>
                   </select>
-                  <input value={matterForm.next_step} onChange={(e) => setMatterForm({ ...matterForm, next_step: e.target.value })} placeholder="Next Legal Step" className={inputClass} />
-                  <input value={matterForm.assigned_lawyer} onChange={(e) => setMatterForm({ ...matterForm, assigned_lawyer: e.target.value })} placeholder="Assigned Lawyer" className={inputClass} />
-                  <input type="date" value={matterForm.court_date} onChange={(e) => setMatterForm({ ...matterForm, court_date: e.target.value })} className={inputClass} />
-                  <input type="number" value={matterForm.cost_estimate} onChange={(e) => setMatterForm({ ...matterForm, cost_estimate: e.target.value })} placeholder="Estimated Legal Cost" className={inputClass} />
-                  <select value={matterForm.priority} onChange={(e) => setMatterForm({ ...matterForm, priority: e.target.value as Priority })} className={inputClass}>
+                  <input
+                    value={matterForm.next_step}
+                    onChange={(e) =>
+                      setMatterForm({
+                        ...matterForm,
+                        next_step: e.target.value,
+                      })
+                    }
+                    placeholder="Next Legal Step"
+                    className={inputClass}
+                  />
+                  <input
+                    value={matterForm.assigned_lawyer}
+                    onChange={(e) =>
+                      setMatterForm({
+                        ...matterForm,
+                        assigned_lawyer: e.target.value,
+                      })
+                    }
+                    placeholder="Assigned Lawyer"
+                    className={inputClass}
+                  />
+                  <input
+                    type="date"
+                    value={matterForm.court_date}
+                    onChange={(e) =>
+                      setMatterForm({
+                        ...matterForm,
+                        court_date: e.target.value,
+                      })
+                    }
+                    className={inputClass}
+                  />
+                  <input
+                    type="number"
+                    value={matterForm.cost_estimate}
+                    onChange={(e) =>
+                      setMatterForm({
+                        ...matterForm,
+                        cost_estimate: e.target.value,
+                      })
+                    }
+                    placeholder="Estimated Legal Cost"
+                    className={inputClass}
+                  />
+                  <select
+                    value={matterForm.priority}
+                    onChange={(e) =>
+                      setMatterForm({
+                        ...matterForm,
+                        priority: e.target.value as Priority,
+                      })
+                    }
+                    className={inputClass}
+                  >
                     <option className="bg-slate-900">High</option>
                     <option className="bg-slate-900">Medium</option>
                     <option className="bg-slate-900">Low</option>
                   </select>
-                  <button onClick={handleAddMatter} className="w-full rounded-2xl bg-gradient-to-r from-cyan-400 to-blue-500 px-4 py-3 font-semibold text-slate-950">
+                  <button
+                    onClick={handleAddMatter}
+                    className="w-full rounded-2xl bg-gradient-to-r from-cyan-400 to-blue-500 px-4 py-3 font-semibold text-slate-950"
+                  >
                     Save Matter
                   </button>
                 </div>
@@ -765,7 +956,12 @@ export default function TumulLegalV3() {
                     <h3 className={sectionTitle}>Digital Case Docket</h3>
                     <p className={muted}>Search legal matters</p>
                   </div>
-                  <input value={matterSearch} onChange={(e) => setMatterSearch(e.target.value)} placeholder="Search matter, client, lawyer, case type..." className={`${inputClass} lg:max-w-md`} />
+                  <input
+                    value={matterSearch}
+                    onChange={(e) => setMatterSearch(e.target.value)}
+                    placeholder="Search matter, client, lawyer, case type..."
+                    className={`${inputClass} lg:max-w-md`}
+                  />
                 </div>
 
                 <div className="overflow-x-auto">
@@ -784,26 +980,47 @@ export default function TumulLegalV3() {
                     </thead>
                     <tbody>
                       {filteredMatters.map((matter) => (
-                        <tr key={matter.id} className="border-b border-white/5 text-slate-200">
+                        <tr
+                          key={matter.id}
+                          className="border-b border-white/5 text-slate-200"
+                        >
                           <td className="px-3 py-4">
-                            <div className="font-semibold text-white">{matter.matter_no}</div>
-                            <div className="mt-1 text-xs text-slate-400">{matter.next_step || "No next step yet"}</div>
+                            <div className="font-semibold text-white">
+                              {matter.matter_no}
+                            </div>
+                            <div className="mt-1 text-xs text-slate-400">
+                              {matter.next_step || "No next step yet"}
+                            </div>
                           </td>
                           <td className="px-3 py-4">{matter.client_name}</td>
                           <td className="px-3 py-4">{matter.case_type}</td>
-                          <td className="px-3 py-4">{matter.assigned_lawyer}</td>
                           <td className="px-3 py-4">
-                            <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getStatusClass(matter.status)}`}>
+                            {matter.assigned_lawyer}
+                          </td>
+                          <td className="px-3 py-4">
+                            <span
+                              className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getStatusClass(
+                                matter.status
+                              )}`}
+                            >
                               {matter.status}
                             </span>
                           </td>
                           <td className="px-3 py-4">
-                            <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getPriorityClass(matter.priority)}`}>
+                            <span
+                              className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getPriorityClass(
+                                matter.priority
+                              )}`}
+                            >
                               {matter.priority}
                             </span>
                           </td>
-                          <td className="px-3 py-4">{matter.court_date || "Not set"}</td>
-                          <td className="px-3 py-4 font-semibold text-white">{currency(Number(matter.cost_estimate || 0))}</td>
+                          <td className="px-3 py-4">
+                            {matter.court_date || "Not set"}
+                          </td>
+                          <td className="px-3 py-4 font-semibold text-white">
+                            {currency(Number(matter.cost_estimate || 0))}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -822,11 +1039,45 @@ export default function TumulLegalV3() {
                 </div>
 
                 <div className="space-y-3">
-                  <input value={clientForm.name} onChange={(e) => setClientForm({ ...clientForm, name: e.target.value })} placeholder="Full Name / Business Name" className={inputClass} />
-                  <input value={clientForm.phone} onChange={(e) => setClientForm({ ...clientForm, phone: e.target.value })} placeholder="Phone Number" className={inputClass} />
-                  <input value={clientForm.email} onChange={(e) => setClientForm({ ...clientForm, email: e.target.value })} placeholder="Email Address" className={inputClass} />
-                  <input value={clientForm.address} onChange={(e) => setClientForm({ ...clientForm, address: e.target.value })} placeholder="Address" className={inputClass} />
-                  <select value={clientForm.source} onChange={(e) => setClientForm({ ...clientForm, source: e.target.value })} className={inputClass}>
+                  <input
+                    value={clientForm.name}
+                    onChange={(e) =>
+                      setClientForm({ ...clientForm, name: e.target.value })
+                    }
+                    placeholder="Full Name / Business Name"
+                    className={inputClass}
+                  />
+                  <input
+                    value={clientForm.phone}
+                    onChange={(e) =>
+                      setClientForm({ ...clientForm, phone: e.target.value })
+                    }
+                    placeholder="Phone Number"
+                    className={inputClass}
+                  />
+                  <input
+                    value={clientForm.email}
+                    onChange={(e) =>
+                      setClientForm({ ...clientForm, email: e.target.value })
+                    }
+                    placeholder="Email Address"
+                    className={inputClass}
+                  />
+                  <input
+                    value={clientForm.address}
+                    onChange={(e) =>
+                      setClientForm({ ...clientForm, address: e.target.value })
+                    }
+                    placeholder="Address"
+                    className={inputClass}
+                  />
+                  <select
+                    value={clientForm.source}
+                    onChange={(e) =>
+                      setClientForm({ ...clientForm, source: e.target.value })
+                    }
+                    className={inputClass}
+                  >
                     <option className="bg-slate-900">Referral</option>
                     <option className="bg-slate-900">Friend</option>
                     <option className="bg-slate-900">Family</option>
@@ -834,7 +1085,10 @@ export default function TumulLegalV3() {
                     <option className="bg-slate-900">Website</option>
                     <option className="bg-slate-900">Walk In</option>
                   </select>
-                  <button onClick={handleAddClient} className="w-full rounded-2xl bg-gradient-to-r from-cyan-400 to-blue-500 px-4 py-3 font-semibold text-slate-950">
+                  <button
+                    onClick={handleAddClient}
+                    className="w-full rounded-2xl bg-gradient-to-r from-cyan-400 to-blue-500 px-4 py-3 font-semibold text-slate-950"
+                  >
                     Save Client
                   </button>
                 </div>
@@ -846,17 +1100,31 @@ export default function TumulLegalV3() {
                     <h3 className={sectionTitle}>Client Management</h3>
                     <p className={muted}>Saved client profiles</p>
                   </div>
-                  <input value={clientSearch} onChange={(e) => setClientSearch(e.target.value)} placeholder="Search client, phone, email..." className={`${inputClass} lg:max-w-md`} />
+                  <input
+                    value={clientSearch}
+                    onChange={(e) => setClientSearch(e.target.value)}
+                    placeholder="Search client, phone, email..."
+                    className={`${inputClass} lg:max-w-md`}
+                  />
                 </div>
 
                 <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                   {filteredClients.map((client) => (
-                    <div key={client.id} className="rounded-3xl border border-white/10 bg-white/5 p-5">
+                    <div
+                      key={client.id}
+                      className="rounded-3xl border border-white/10 bg-white/5 p-5"
+                    >
                       <div className="flex items-start justify-between gap-3">
                         <div>
-                          <h4 className="text-lg font-bold text-white">{client.name}</h4>
-                          <p className="mt-1 text-sm text-slate-400">{client.phone}</p>
-                          <p className="text-sm text-slate-400">{client.email}</p>
+                          <h4 className="text-lg font-bold text-white">
+                            {client.name}
+                          </h4>
+                          <p className="mt-1 text-sm text-slate-400">
+                            {client.phone}
+                          </p>
+                          <p className="text-sm text-slate-400">
+                            {client.email}
+                          </p>
                         </div>
                         <span className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-xs font-semibold text-cyan-200">
                           {client.source}
@@ -864,9 +1132,24 @@ export default function TumulLegalV3() {
                       </div>
 
                       <div className="mt-4 space-y-2 text-sm text-slate-300">
-                        <p><span className="font-semibold text-white">Address:</span> {client.address || "Not set"}</p>
-                        <p><span className="font-semibold text-white">Matters:</span> {client.matter_count}</p>
-                        <p><span className="font-semibold text-white">Last Contact:</span> {client.last_contact}</p>
+                        <p>
+                          <span className="font-semibold text-white">
+                            Address:
+                          </span>{" "}
+                          {client.address || "Not set"}
+                        </p>
+                        <p>
+                          <span className="font-semibold text-white">
+                            Matters:
+                          </span>{" "}
+                          {client.matter_count}
+                        </p>
+                        <p>
+                          <span className="font-semibold text-white">
+                            Last Contact:
+                          </span>{" "}
+                          {client.last_contact}
+                        </p>
                       </div>
                     </div>
                   ))}
@@ -884,18 +1167,94 @@ export default function TumulLegalV3() {
                 </div>
 
                 <div className="space-y-3">
-                  <input value={invoiceForm.invoice_no} onChange={(e) => setInvoiceForm({ ...invoiceForm, invoice_no: e.target.value })} placeholder="Invoice Number" className={inputClass} />
-                  <input value={invoiceForm.client_name} onChange={(e) => setInvoiceForm({ ...invoiceForm, client_name: e.target.value })} placeholder="Client Name" className={inputClass} />
-                  <input value={invoiceForm.matter_no} onChange={(e) => setInvoiceForm({ ...invoiceForm, matter_no: e.target.value })} placeholder="Matter Number" className={inputClass} />
-                  <input type="number" value={invoiceForm.amount} onChange={(e) => setInvoiceForm({ ...invoiceForm, amount: e.target.value })} placeholder="Amount" className={inputClass} />
-                  <select value={invoiceForm.status} onChange={(e) => setInvoiceForm({ ...invoiceForm, status: e.target.value as "Paid" | "Unpaid" | "Part Paid" })} className={inputClass}>
+                  <input
+                    value={invoiceForm.invoice_no}
+                    onChange={(e) =>
+                      setInvoiceForm({
+                        ...invoiceForm,
+                        invoice_no: e.target.value,
+                      })
+                    }
+                    placeholder="Invoice Number"
+                    className={inputClass}
+                  />
+                  <input
+                    value={invoiceForm.client_name}
+                    onChange={(e) =>
+                      setInvoiceForm({
+                        ...invoiceForm,
+                        client_name: e.target.value,
+                      })
+                    }
+                    placeholder="Client Name"
+                    className={inputClass}
+                  />
+                  <input
+                    value={invoiceForm.matter_no}
+                    onChange={(e) =>
+                      setInvoiceForm({
+                        ...invoiceForm,
+                        matter_no: e.target.value,
+                      })
+                    }
+                    placeholder="Matter Number"
+                    className={inputClass}
+                  />
+                  <input
+                    type="number"
+                    value={invoiceForm.amount}
+                    onChange={(e) =>
+                      setInvoiceForm({
+                        ...invoiceForm,
+                        amount: e.target.value,
+                      })
+                    }
+                    placeholder="Amount"
+                    className={inputClass}
+                  />
+                  <select
+                    value={invoiceForm.status}
+                    onChange={(e) =>
+                      setInvoiceForm({
+                        ...invoiceForm,
+                        status: e.target.value as
+                          | "Paid"
+                          | "Unpaid"
+                          | "Part Paid",
+                      })
+                    }
+                    className={inputClass}
+                  >
                     <option className="bg-slate-900">Unpaid</option>
                     <option className="bg-slate-900">Part Paid</option>
                     <option className="bg-slate-900">Paid</option>
                   </select>
-                  <input type="date" value={invoiceForm.issued_date} onChange={(e) => setInvoiceForm({ ...invoiceForm, issued_date: e.target.value })} className={inputClass} />
-                  <input type="date" value={invoiceForm.due_date} onChange={(e) => setInvoiceForm({ ...invoiceForm, due_date: e.target.value })} className={inputClass} />
-                  <button onClick={handleAddInvoice} className="w-full rounded-2xl bg-gradient-to-r from-cyan-400 to-blue-500 px-4 py-3 font-semibold text-slate-950">
+                  <input
+                    type="date"
+                    value={invoiceForm.issued_date}
+                    onChange={(e) =>
+                      setInvoiceForm({
+                        ...invoiceForm,
+                        issued_date: e.target.value,
+                      })
+                    }
+                    className={inputClass}
+                  />
+                  <input
+                    type="date"
+                    value={invoiceForm.due_date}
+                    onChange={(e) =>
+                      setInvoiceForm({
+                        ...invoiceForm,
+                        due_date: e.target.value,
+                      })
+                    }
+                    className={inputClass}
+                  />
+                  <button
+                    onClick={handleAddInvoice}
+                    className="w-full rounded-2xl bg-gradient-to-r from-cyan-400 to-blue-500 px-4 py-3 font-semibold text-slate-950"
+                  >
                     Save Invoice
                   </button>
                 </div>
@@ -907,21 +1266,35 @@ export default function TumulLegalV3() {
                     <h3 className={sectionTitle}>Invoice & Billing Tracker</h3>
                     <p className={muted}>Saved financial records</p>
                   </div>
-                  <input value={invoiceSearch} onChange={(e) => setInvoiceSearch(e.target.value)} placeholder="Search invoice, client, matter..." className={`${inputClass} lg:max-w-md`} />
+                  <input
+                    value={invoiceSearch}
+                    onChange={(e) => setInvoiceSearch(e.target.value)}
+                    placeholder="Search invoice, client, matter..."
+                    className={`${inputClass} lg:max-w-md`}
+                  />
                 </div>
 
                 <div className="mb-5 grid grid-cols-1 gap-4 md:grid-cols-3">
                   <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
                     <p className="text-sm text-slate-400">Total Billing</p>
-                    <h4 className="mt-2 text-2xl font-bold text-white">{currency(totalInvoiceValue)}</h4>
+                    <h4 className="mt-2 text-2xl font-bold text-white">
+                      {currency(totalInvoiceValue)}
+                    </h4>
                   </div>
                   <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
                     <p className="text-sm text-slate-400">Outstanding</p>
-                    <h4 className="mt-2 text-2xl font-bold text-cyan-300">{currency(outstandingValue)}</h4>
+                    <h4 className="mt-2 text-2xl font-bold text-cyan-300">
+                      {currency(outstandingValue)}
+                    </h4>
                   </div>
                   <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
                     <p className="text-sm text-slate-400">Paid Invoices</p>
-                    <h4 className="mt-2 text-2xl font-bold text-white">{invoices.filter((invoice) => invoice.status === "Paid").length}</h4>
+                    <h4 className="mt-2 text-2xl font-bold text-white">
+                      {
+                        invoices.filter((invoice) => invoice.status === "Paid")
+                          .length
+                      }
+                    </h4>
                   </div>
                 </div>
 
@@ -940,15 +1313,30 @@ export default function TumulLegalV3() {
                     </thead>
                     <tbody>
                       {filteredInvoices.map((invoice) => (
-                        <tr key={invoice.id} className="border-b border-white/5 text-slate-200">
-                          <td className="px-3 py-4 font-semibold text-white">{invoice.invoice_no}</td>
+                        <tr
+                          key={invoice.id}
+                          className="border-b border-white/5 text-slate-200"
+                        >
+                          <td className="px-3 py-4 font-semibold text-white">
+                            {invoice.invoice_no}
+                          </td>
                           <td className="px-3 py-4">{invoice.client_name}</td>
                           <td className="px-3 py-4">{invoice.matter_no}</td>
-                          <td className="px-3 py-4">{invoice.issued_date || "Not set"}</td>
-                          <td className="px-3 py-4">{invoice.due_date || "Not set"}</td>
-                          <td className="px-3 py-4 font-semibold text-white">{currency(Number(invoice.amount || 0))}</td>
                           <td className="px-3 py-4">
-                            <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getStatusClass(invoice.status)}`}>
+                            {invoice.issued_date || "Not set"}
+                          </td>
+                          <td className="px-3 py-4">
+                            {invoice.due_date || "Not set"}
+                          </td>
+                          <td className="px-3 py-4 font-semibold text-white">
+                            {currency(Number(invoice.amount || 0))}
+                          </td>
+                          <td className="px-3 py-4">
+                            <span
+                              className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getStatusClass(
+                                invoice.status
+                              )}`}
+                            >
                               {invoice.status}
                             </span>
                           </td>
@@ -964,10 +1352,34 @@ export default function TumulLegalV3() {
           {activeTab === "reports" && (
             <div className="space-y-6">
               <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-                <StatCard label="Open Matters" value={openMatters} subtext="Still active in workflow" />
-                <StatCard label="Closed Matters" value={matters.filter((matter) => matter.status === "Closed").length} subtext="Completed matters" />
-                <StatCard label="Unpaid Invoices" value={invoices.filter((invoice) => invoice.status === "Unpaid").length} subtext="Awaiting payment" />
-                <StatCard label="Part Paid" value={invoices.filter((invoice) => invoice.status === "Part Paid").length} subtext="Need follow-up" />
+                <StatCard
+                  label="Open Matters"
+                  value={openMatters}
+                  subtext="Still active in workflow"
+                />
+                <StatCard
+                  label="Closed Matters"
+                  value={
+                    matters.filter((matter) => matter.status === "Closed").length
+                  }
+                  subtext="Completed matters"
+                />
+                <StatCard
+                  label="Unpaid Invoices"
+                  value={
+                    invoices.filter((invoice) => invoice.status === "Unpaid")
+                      .length
+                  }
+                  subtext="Awaiting payment"
+                />
+                <StatCard
+                  label="Part Paid"
+                  value={
+                    invoices.filter((invoice) => invoice.status === "Part Paid")
+                      .length
+                  }
+                  subtext="Need follow-up"
+                />
               </section>
 
               <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
@@ -978,9 +1390,14 @@ export default function TumulLegalV3() {
                   </div>
                   <div className="space-y-3">
                     {matterStatusSummary.map((item) => (
-                      <div key={item.status} className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                      <div
+                        key={item.status}
+                        className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-3"
+                      >
                         <span className="text-slate-200">{item.status}</span>
-                        <span className="text-lg font-bold text-white">{item.count}</span>
+                        <span className="text-lg font-bold text-white">
+                          {item.count}
+                        </span>
                       </div>
                     ))}
                   </div>
@@ -993,9 +1410,14 @@ export default function TumulLegalV3() {
                   </div>
                   <div className="space-y-3">
                     {intakeSummary.map((item) => (
-                      <div key={item.source} className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                      <div
+                        key={item.source}
+                        className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-3"
+                      >
                         <span className="text-slate-200">{item.source}</span>
-                        <span className="text-lg font-bold text-white">{item.count}</span>
+                        <span className="text-lg font-bold text-white">
+                          {item.count}
+                        </span>
                       </div>
                     ))}
                   </div>
@@ -1011,15 +1433,21 @@ export default function TumulLegalV3() {
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                   <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
                     <p className="text-sm text-slate-400">Total Invoiced</p>
-                    <h4 className="mt-2 text-2xl font-bold text-white">{currency(totalInvoiceValue)}</h4>
+                    <h4 className="mt-2 text-2xl font-bold text-white">
+                      {currency(totalInvoiceValue)}
+                    </h4>
                   </div>
                   <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
                     <p className="text-sm text-slate-400">Outstanding Value</p>
-                    <h4 className="mt-2 text-2xl font-bold text-cyan-300">{currency(outstandingValue)}</h4>
+                    <h4 className="mt-2 text-2xl font-bold text-cyan-300">
+                      {currency(outstandingValue)}
+                    </h4>
                   </div>
                   <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
                     <p className="text-sm text-slate-400">Collected Value</p>
-                    <h4 className="mt-2 text-2xl font-bold text-white">{currency(collectedValue)}</h4>
+                    <h4 className="mt-2 text-2xl font-bold text-white">
+                      {currency(collectedValue)}
+                    </h4>
                   </div>
                 </div>
               </div>
