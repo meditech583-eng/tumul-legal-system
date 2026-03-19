@@ -1,5 +1,5 @@
 export const branding = {
-    platformName: "MTec Legal",
+    platformName: "MTEC SYSTEMS",
     clientName: "Tumul Legal",
   
     tagline: "Powered by Meditech IT Services",
