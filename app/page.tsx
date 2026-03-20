@@ -1,7 +1,7 @@
 "use client";
 
 import { branding } from "./config/branding";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "./lib/supabase/client";
 
 type Tab =
@@ -214,6 +214,19 @@ const downloadCsv = (filename: string, rows: Record<string, unknown>[]) => {
   URL.revokeObjectURL(url);
 };
 
+const sectionToTab = (sectionName: string): Tab => {
+  const name = sectionName.toLowerCase();
+  if (name.includes("docket") || name.includes("matter")) return "docket";
+  if (name.includes("client")) return "clients";
+  if (name.includes("bill") || name.includes("invoice")) return "billing";
+  if (name.includes("report")) return "reports";
+  if (name.includes("user")) return "users";
+  if (name.includes("activity")) return "activity";
+  return "dashboard";
+};
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export default function TumulLegalV3() {
   const [session, setSession] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -223,6 +236,8 @@ export default function TumulLegalV3() {
   const [authMessage, setAuthMessage] = useState("");
 
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
+  const [printSection, setPrintSection] = useState<Tab | null>(null);
+  const printTimerRef = useRef<number | null>(null);
 
   const [matters, setMatters] = useState<Matter[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
@@ -429,6 +444,20 @@ export default function TumulLegalV3() {
     if (activeTab === "users" && !permissions.users) setActiveTab("dashboard");
     if (activeTab === "activity" && !permissions.activity) setActiveTab("dashboard");
   }, [activeTab, permissions, session]);
+
+  useEffect(() => {
+    const handleAfterPrint = () => {
+      document.body.classList.remove("printing-active");
+      setPrintSection(null);
+    };
+
+    window.addEventListener("afterprint", handleAfterPrint);
+
+    return () => {
+      window.removeEventListener("afterprint", handleAfterPrint);
+      if (printTimerRef.current) window.clearTimeout(printTimerRef.current);
+    };
+  }, []);
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -866,14 +895,74 @@ export default function TumulLegalV3() {
     logActivity("Exported activity log to CSV", "Activity");
   };
 
-  const handlePrint = (sectionName: string) => {
+  const handlePrint = async (sectionName: string) => {
     if (!permissions.printData) {
       alert("You do not have permission to print.");
       return;
     }
 
+    const targetTab = sectionToTab(sectionName);
+    setPrintSection(targetTab);
+    document.body.classList.add("printing-active");
     logActivity(`Printed ${sectionName}`, sectionName);
+
+    await wait(250);
     window.print();
+  };
+
+  const handleExportPdf = async (sectionName: string) => {
+    if (!permissions.printData) {
+      alert("You do not have permission to export PDF.");
+      return;
+    }
+
+    const targetTab = sectionToTab(sectionName);
+    setPrintSection(targetTab);
+    document.body.classList.add("printing-active");
+    logActivity(`Exported ${sectionName} to PDF`, sectionName);
+
+    await wait(250);
+    window.print();
+  };
+
+  const handleDeleteMatter = async (matter: Matter) => {
+    if (currentUserProfile.role !== "Super Admin" && currentUserProfile.role !== "Lawyer") {
+      alert("Only Super Admin or Lawyer can delete matters.");
+      return;
+    }
+
+    const confirmed = window.confirm(`Delete matter ${matter.matter_no}?`);
+    if (!confirmed) return;
+
+    const { error } = await supabase.from("matters").delete().eq("id", matter.id);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    logActivity(`Deleted matter ${matter.matter_no}`, "Case Docket");
+    await loadAllData();
+  };
+
+  const handleDeleteClient = async (client: Client) => {
+    if (currentUserProfile.role !== "Super Admin" && currentUserProfile.role !== "Secretary") {
+      alert("Only Super Admin or Secretary can delete clients.");
+      return;
+    }
+
+    const confirmed = window.confirm(`Delete client ${client.name}?`);
+    if (!confirmed) return;
+
+    const { error } = await supabase.from("clients").delete().eq("id", client.id);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    logActivity(`Deleted client ${client.name}`, "Clients");
+    await loadAllData();
   };
 
   const getStatusClass = (status: string) => {
@@ -1151,7 +1240,7 @@ export default function TumulLegalV3() {
             </div>
           </div>
 
-          <div className={`${glassCard} mb-6 p-3`}>
+          <div className={`${glassCard} mb-6 p-3 no-print`}>
             <nav className="space-y-2">
               <NavButton id="dashboard" label="Dashboard" icon="◫" />
               <NavButton id="docket" label="Case Docket" icon="⚖" />
@@ -1196,7 +1285,7 @@ export default function TumulLegalV3() {
 
             <button
               onClick={handleLogout}
-              className="mt-6 w-full rounded-2xl bg-white/10 px-4 py-3 text-sm font-semibold text-white hover:bg-white/15"
+              className="no-print mt-6 w-full rounded-2xl bg-white/10 px-4 py-3 text-sm font-semibold text-white hover:bg-white/15"
             >
               Logout
             </button>
@@ -1204,7 +1293,8 @@ export default function TumulLegalV3() {
         </aside>
 
         <main className="flex-1 p-4 sm:p-6 lg:p-8">
-          <div className={`${glassCard} mb-6 overflow-hidden`}>
+          <div id="print-root" data-print-section={printSection || activeTab}>
+          <div className={`${glassCard} mb-6 overflow-hidden no-print`}>
             <div className="flex flex-col gap-5 p-6 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <p className="text-sm font-medium text-cyan-300/80">
@@ -1282,7 +1372,7 @@ export default function TumulLegalV3() {
 
               <section className="grid grid-cols-1 gap-6 xl:grid-cols-3">
                 <div className={`${glassCard} p-5 xl:col-span-2`}>
-                  <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="no-print mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <h3 className={sectionTitle}>Recent Matters</h3>
                       <p className={muted}>Saved legal docket records</p>
@@ -1293,6 +1383,12 @@ export default function TumulLegalV3() {
                         className={secondaryButton}
                       >
                         Print
+                      </button>
+                      <button
+                        onClick={() => handleExportPdf("Dashboard")}
+                        className={secondaryButton}
+                      >
+                        Export PDF
                       </button>
                       {permissions.exportData && (
                         <button
@@ -1373,7 +1469,7 @@ export default function TumulLegalV3() {
 
           {activeTab === "docket" && permissions.docket && (
             <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-              <div className={`${glassCard} p-5`}>
+              <div className={`${glassCard} p-5 no-print`}>
                 <div className="mb-4">
                   <h3 className={sectionTitle}>Add New Matter</h3>
                   <p className={muted}>Save matter to database</p>
@@ -1509,7 +1605,7 @@ export default function TumulLegalV3() {
               </div>
 
               <div className={`${glassCard} p-5 xl:col-span-2`}>
-                <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div className="no-print mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                   <div>
                     <h3 className={sectionTitle}>Digital Case Docket</h3>
                     <p className={muted}>Search legal matters</p>
@@ -1526,6 +1622,12 @@ export default function TumulLegalV3() {
                       className={secondaryButton}
                     >
                       Print
+                    </button>
+                    <button
+                      onClick={() => handleExportPdf("Case Docket")}
+                      className={secondaryButton}
+                    >
+                      Export PDF
                     </button>
                     {permissions.exportData && (
                       <button
@@ -1595,6 +1697,14 @@ export default function TumulLegalV3() {
                           <td className="px-3 py-4 font-semibold text-white">
                             {currency(Number(matter.cost_estimate || 0))}
                           </td>
+                          <td className="px-3 py-4 no-print">
+                            <button
+                              onClick={() => handleDeleteMatter(matter)}
+                              className="rounded-2xl px-4 py-2 text-xs font-semibold transition border border-rose-400/30 bg-rose-400/10 text-rose-200 hover:bg-rose-400/20"
+                            >
+                              Delete
+                            </button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -1606,7 +1716,7 @@ export default function TumulLegalV3() {
 
           {activeTab === "clients" && permissions.clients && (
             <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-              <div className={`${glassCard} p-5`}>
+              <div className={`${glassCard} p-5 no-print`}>
                 <div className="mb-4">
                   <h3 className={sectionTitle}>Add New Client</h3>
                   <p className={muted}>Save client to database</p>
@@ -1693,6 +1803,12 @@ export default function TumulLegalV3() {
                     >
                       Print
                     </button>
+                    <button
+                      onClick={() => handleExportPdf("Clients")}
+                      className={secondaryButton}
+                    >
+                      Export PDF
+                    </button>
                     {permissions.exportData && (
                       <button
                         onClick={handleExportClients}
@@ -1747,6 +1863,15 @@ export default function TumulLegalV3() {
                           {client.last_contact}
                         </p>
                       </div>
+
+                      <div className="no-print mt-4 flex justify-end">
+                        <button
+                          onClick={() => handleDeleteClient(client)}
+                          className="rounded-2xl px-4 py-2 text-xs font-semibold transition border border-rose-400/30 bg-rose-400/10 text-rose-200 hover:bg-rose-400/20"
+                        >
+                          Delete Client
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1756,7 +1881,7 @@ export default function TumulLegalV3() {
 
           {activeTab === "billing" && permissions.billing && (
             <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-              <div className={`${glassCard} p-5`}>
+              <div className={`${glassCard} p-5 no-print`}>
                 <div className="mb-4">
                   <h3 className={sectionTitle}>Create Invoice</h3>
                   <p className={muted}>Save invoice to database</p>
@@ -1862,7 +1987,7 @@ export default function TumulLegalV3() {
               </div>
 
               <div className={`${glassCard} p-5 xl:col-span-2`}>
-                <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div className="no-print mb-5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                   <div>
                     <h3 className={sectionTitle}>Invoice & Billing Tracker</h3>
                     <p className={muted}>Saved financial records</p>
@@ -1879,6 +2004,12 @@ export default function TumulLegalV3() {
                       className={secondaryButton}
                     >
                       Print
+                    </button>
+                    <button
+                      onClick={() => handleExportPdf("Billing")}
+                      className={secondaryButton}
+                    >
+                      Export PDF
                     </button>
                     {permissions.exportData && (
                       <button
@@ -1968,12 +2099,18 @@ export default function TumulLegalV3() {
 
           {activeTab === "reports" && permissions.reports && (
             <div className="space-y-6">
-              <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
+              <div className="no-print flex flex-col gap-3 sm:flex-row sm:justify-end">
                 <button
                   onClick={() => handlePrint("Reports")}
                   className={secondaryButton}
                 >
                   Print Reports
+                </button>
+                <button
+                  onClick={() => handleExportPdf("Reports")}
+                  className={secondaryButton}
+                >
+                  Export PDF
                 </button>
                 {permissions.exportData && (
                   <button
@@ -2100,12 +2237,66 @@ export default function TumulLegalV3() {
                   </div>
                 </div>
               )}
+
+              <div className="grid grid-cols-1 gap-6 xl:grid-cols-2 no-print">
+                <div className={`${glassCard} p-5`}>
+                  <div className="mb-4">
+                    <h3 className={sectionTitle}>Delete Client Records</h3>
+                    <p className={muted}>Quick remove option for saved clients.</p>
+                  </div>
+                  <div className="space-y-3 max-h-[360px] overflow-y-auto">
+                    {filteredClients.length === 0 ? (
+                      <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-4 text-sm text-slate-400">
+                        No clients found.
+                      </div>
+                    ) : (
+                      filteredClients.slice(0, 10).map((client) => (
+                        <div key={`report-client-${client.id}`} className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                          <div>
+                            <p className="font-semibold text-white">{client.name}</p>
+                            <p className="text-xs text-slate-400">{client.phone} • {client.email || "No email"}</p>
+                          </div>
+                          <button onClick={() => handleDeleteClient(client)} className="rounded-2xl px-4 py-2 text-xs font-semibold transition border border-rose-400/30 bg-rose-400/10 text-rose-200 hover:bg-rose-400/20">
+                            Delete
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div className={`${glassCard} p-5`}>
+                  <div className="mb-4">
+                    <h3 className={sectionTitle}>Delete Matter Records</h3>
+                    <p className={muted}>Quick remove option for docket records.</p>
+                  </div>
+                  <div className="space-y-3 max-h-[360px] overflow-y-auto">
+                    {filteredMatters.length === 0 ? (
+                      <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-4 text-sm text-slate-400">
+                        No matters found.
+                      </div>
+                    ) : (
+                      filteredMatters.slice(0, 10).map((matter) => (
+                        <div key={`report-matter-${matter.id}`} className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                          <div>
+                            <p className="font-semibold text-white">{matter.matter_no}</p>
+                            <p className="text-xs text-slate-400">{matter.client_name} • {matter.status}</p>
+                          </div>
+                          <button onClick={() => handleDeleteMatter(matter)} className="rounded-2xl px-4 py-2 text-xs font-semibold transition border border-rose-400/30 bg-rose-400/10 text-rose-200 hover:bg-rose-400/20">
+                            Delete
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 
           {activeTab === "users" && permissions.users && (
             <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-              <div className={`${glassCard} p-5`}>
+              <div className={`${glassCard} p-5 no-print`}>
                 <div className="mb-4">
                   <h3 className={sectionTitle}>Add Staff User</h3>
                   <p className={muted}>
@@ -2231,7 +2422,7 @@ export default function TumulLegalV3() {
           {activeTab === "activity" && permissions.activity && (
             <div className="space-y-6">
               <div className={`${glassCard} p-5`}>
-                <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="no-print mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <h3 className={sectionTitle}>Activity Log</h3>
                     <p className={muted}>
@@ -2244,6 +2435,12 @@ export default function TumulLegalV3() {
                       className={secondaryButton}
                     >
                       Print
+                    </button>
+                    <button
+                      onClick={() => handleExportPdf("Activity Log")}
+                      className={secondaryButton}
+                    >
+                      Export PDF
                     </button>
                     {permissions.exportData && (
                       <button
@@ -2292,6 +2489,89 @@ export default function TumulLegalV3() {
               </div>
             </div>
           )}
+          </div>
+
+          <style jsx global>{`
+            @media print {
+              @page {
+                size: A4 portrait;
+                margin: 12mm;
+              }
+
+              html, body {
+                background: #ffffff !important;
+              }
+
+              body.printing-active * {
+                visibility: hidden !important;
+              }
+
+              body.printing-active #print-root,
+              body.printing-active #print-root * {
+                visibility: visible !important;
+              }
+
+              body.printing-active aside,
+              body.printing-active .no-print {
+                display: none !important;
+              }
+
+              body.printing-active main {
+                width: 100% !important;
+                padding: 0 !important;
+                margin: 0 !important;
+              }
+
+              body.printing-active #print-root {
+                position: static !important;
+                display: block !important;
+                width: 100% !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                background: #ffffff !important;
+                color: #111827 !important;
+              }
+
+              body.printing-active #print-root [class*="bg-"],
+              body.printing-active #print-root [class*="from-"],
+              body.printing-active #print-root [class*="to-"] {
+                background: #ffffff !important;
+                color: #111827 !important;
+                box-shadow: none !important;
+              }
+
+              body.printing-active #print-root table {
+                width: 100% !important;
+                border-collapse: collapse !important;
+              }
+
+              body.printing-active #print-root th,
+              body.printing-active #print-root td {
+                color: #111827 !important;
+                border-color: #d1d5db !important;
+              }
+
+              body.printing-active #print-root .text-white,
+              body.printing-active #print-root .text-slate-400,
+              body.printing-active #print-root .text-slate-300,
+              body.printing-active #print-root .text-cyan-300,
+              body.printing-active #print-root .text-cyan-200,
+              body.printing-active #print-root .text-emerald-200,
+              body.printing-active #print-root .text-rose-200,
+              body.printing-active #print-root .text-amber-200,
+              body.printing-active #print-root .text-violet-200,
+              body.printing-active #print-root .text-blue-200 {
+                color: #111827 !important;
+              }
+
+              body.printing-active #print-root .rounded-3xl,
+              body.printing-active #print-root .rounded-2xl {
+                border: 1px solid #d1d5db !important;
+                break-inside: avoid;
+                page-break-inside: avoid;
+              }
+            }
+          `}</style>
         </main>
       </div>
     </div>
