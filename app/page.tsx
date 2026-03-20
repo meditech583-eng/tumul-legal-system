@@ -20,6 +20,7 @@ type MatterStatus =
   | "In Court"
   | "Awaiting Client"
   | "Closed";
+  
 
 type Priority = "High" | "Medium" | "Low";
 type InvoiceStatus = "Paid" | "Unpaid" | "Part Paid";
@@ -38,6 +39,7 @@ type Matter = {
   case_type: string;
   status: MatterStatus;
   next_step: string;
+  summary: string;
   assigned_lawyer: string;
   court_date: string;
   cost_estimate: number;
@@ -255,6 +257,7 @@ export default function TumulLegalV3() {
     case_type: "",
     status: "Open" as MatterStatus,
     next_step: "",
+    summary: "",
     assigned_lawyer: "",
     court_date: "",
     cost_estimate: "",
@@ -619,6 +622,7 @@ export default function TumulLegalV3() {
       case_type: "",
       status: "Open",
       next_step: "",
+      summary: "",
       assigned_lawyer: "",
       court_date: "",
       cost_estimate: "",
@@ -1542,6 +1546,18 @@ export default function TumulLegalV3() {
                     className={inputClass}
                     disabled={!permissions.addMatter}
                   />
+                  <textarea
+  value={matterForm.summary}
+  onChange={(e) =>
+    setMatterForm({
+      ...matterForm,
+      summary: e.target.value,
+    })
+  }
+  placeholder="Case Summary"
+  className={`${inputClass} min-h-[120px] resize-y`}
+  disabled={!permissions.addMatter}
+/>
                   <input
                     value={matterForm.assigned_lawyer}
                     onChange={(e) =>
