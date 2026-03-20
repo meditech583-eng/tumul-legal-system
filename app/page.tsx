@@ -9,7 +9,9 @@ type Tab =
   | "docket"
   | "clients"
   | "billing"
-  | "reports";
+  | "reports"
+  | "users"
+  | "activity";
 
 type MatterStatus =
   | "Open"
@@ -20,6 +22,14 @@ type MatterStatus =
   | "Closed";
 
 type Priority = "High" | "Medium" | "Low";
+type InvoiceStatus = "Paid" | "Unpaid" | "Part Paid";
+type AuthMode = "login" | "signup";
+type UserRole =
+  | "Super Admin"
+  | "Lawyer"
+  | "Secretary"
+  | "Billing"
+  | "Viewer";
 
 type Matter = {
   id: number;
@@ -51,12 +61,29 @@ type Invoice = {
   client_name: string;
   matter_no: string;
   amount: number;
-  status: "Paid" | "Unpaid" | "Part Paid";
+  status: InvoiceStatus;
   due_date: string;
   issued_date: string;
 };
 
-type AuthMode = "login" | "signup";
+type StaffUser = {
+  id?: number;
+  full_name: string;
+  email: string;
+  role: UserRole;
+  is_active?: boolean;
+  created_at?: string;
+  created_by?: string;
+};
+
+type ActivityItem = {
+  id: string;
+  time: string;
+  actor: string;
+  role: UserRole;
+  action: string;
+  module: string;
+};
 
 const currency = (value: number) =>
   new Intl.NumberFormat("en-PG", {
@@ -64,6 +91,128 @@ const currency = (value: number) =>
     currency: "PGK",
     maximumFractionDigits: 2,
   }).format(value || 0);
+
+const getRolePermissions = (role: UserRole) => {
+  switch (role) {
+    case "Super Admin":
+      return {
+        dashboard: true,
+        docket: true,
+        clients: true,
+        billing: true,
+        reports: true,
+        users: true,
+        activity: true,
+        addMatter: true,
+        addClient: true,
+        addInvoice: true,
+        exportData: true,
+        printData: true,
+        seeFinancials: true,
+      };
+    case "Lawyer":
+      return {
+        dashboard: true,
+        docket: true,
+        clients: true,
+        billing: false,
+        reports: true,
+        users: false,
+        activity: true,
+        addMatter: true,
+        addClient: false,
+        addInvoice: false,
+        exportData: true,
+        printData: true,
+        seeFinancials: false,
+      };
+    case "Secretary":
+      return {
+        dashboard: true,
+        docket: true,
+        clients: true,
+        billing: false,
+        reports: false,
+        users: false,
+        activity: false,
+        addMatter: true,
+        addClient: true,
+        addInvoice: false,
+        exportData: true,
+        printData: true,
+        seeFinancials: false,
+      };
+    case "Billing":
+      return {
+        dashboard: true,
+        docket: false,
+        clients: true,
+        billing: true,
+        reports: true,
+        users: false,
+        activity: true,
+        addMatter: false,
+        addClient: false,
+        addInvoice: true,
+        exportData: true,
+        printData: true,
+        seeFinancials: true,
+      };
+    case "Viewer":
+    default:
+      return {
+        dashboard: true,
+        docket: false,
+        clients: true,
+        billing: false,
+        reports: false,
+        users: false,
+        activity: false,
+        addMatter: false,
+        addClient: false,
+        addInvoice: false,
+        exportData: false,
+        printData: true,
+        seeFinancials: false,
+      };
+  }
+};
+
+const toCsv = (rows: Record<string, unknown>[]) => {
+  if (!rows.length) return "";
+
+  const headers = Object.keys(rows[0]);
+
+  const escapeCell = (value: unknown) =>
+    `"${String(value ?? "").replace(/"/g, '""')}"`;
+
+  const csvRows = [
+    headers.join(","),
+    ...rows.map((row) =>
+      headers.map((header) => escapeCell(row[header])).join(",")
+    ),
+  ];
+
+  return csvRows.join("\n");
+};
+
+const downloadCsv = (filename: string, rows: Record<string, unknown>[]) => {
+  const csv = toCsv(rows);
+  if (!csv) {
+    alert("No data available to export.");
+    return;
+  }
+
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+};
 
 export default function TumulLegalV3() {
   const [session, setSession] = useState<any>(null);
@@ -78,6 +227,8 @@ export default function TumulLegalV3() {
   const [matters, setMatters] = useState<Matter[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [staffUsers, setStaffUsers] = useState<StaffUser[]>([]);
+  const [activityLog, setActivityLog] = useState<ActivityItem[]>([]);
 
   const [matterSearch, setMatterSearch] = useState("");
   const [clientSearch, setClientSearch] = useState("");
@@ -108,10 +259,117 @@ export default function TumulLegalV3() {
     client_name: "",
     matter_no: "",
     amount: "",
-    status: "Unpaid" as "Paid" | "Unpaid" | "Part Paid",
+    status: "Unpaid" as InvoiceStatus,
     due_date: "",
     issued_date: "",
   });
+
+  const [staffForm, setStaffForm] = useState({
+    full_name: "",
+    email: "",
+    role: "Viewer" as UserRole,
+  });
+
+  useEffect(() => {
+    const savedTab = localStorage.getItem("activeTab");
+    if (savedTab) setActiveTab(savedTab as Tab);
+
+    const savedActivity = localStorage.getItem("tumul_activity_log");
+    if (savedActivity) {
+      try {
+        setActivityLog(JSON.parse(savedActivity));
+      } catch {
+        setActivityLog([]);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem("activeTab", activeTab);
+  }, [activeTab]);
+
+  useEffect(() => {
+    localStorage.setItem("tumul_activity_log", JSON.stringify(activityLog));
+  }, [activityLog]);
+
+  const currentEmail = session?.user?.email?.toLowerCase?.() || "";
+
+  const currentUserProfile = useMemo(() => {
+    const matched = staffUsers.find(
+      (staff) =>
+        staff.email.toLowerCase() === currentEmail &&
+        staff.is_active !== false
+    );
+
+    if (matched) {
+      return {
+        name: matched.full_name,
+        email: matched.email,
+        role: matched.role,
+      };
+    }
+
+    return {
+      name: session?.user?.email || "Unknown User",
+      email: session?.user?.email || "",
+      role: "Viewer" as UserRole,
+    };
+  }, [currentEmail, session, staffUsers]);
+
+  const permissions = useMemo(
+    () => getRolePermissions(currentUserProfile.role),
+    [currentUserProfile.role]
+  );
+
+  const loadAllData = async () => {
+    setLoading(true);
+
+    const [mattersRes, clientsRes, invoicesRes, staffRes] = await Promise.all([
+      supabase.from("matters").select("*").order("id", { ascending: false }),
+      supabase.from("clients").select("*").order("id", { ascending: false }),
+      supabase.from("invoices").select("*").order("id", { ascending: false }),
+      supabase
+        .from("staff_users")
+        .select("*")
+        .order("full_name", { ascending: true }),
+    ]);
+
+    if (!mattersRes.error) setMatters((mattersRes.data as Matter[]) || []);
+    if (!clientsRes.error) setClients((clientsRes.data as Client[]) || []);
+    if (!invoicesRes.error) setInvoices((invoicesRes.data as Invoice[]) || []);
+    if (!staffRes.error) setStaffUsers((staffRes.data as StaffUser[]) || []);
+
+    setLoading(false);
+  };
+
+  const loadStaffUsers = async () => {
+    const { data, error } = await supabase
+      .from("staff_users")
+      .select("*")
+      .order("full_name", { ascending: true });
+
+    if (!error) {
+      setStaffUsers((data as StaffUser[]) || []);
+    }
+  };
+
+  const logActivity = (
+    action: string,
+    module: string,
+    actorName?: string,
+    actorRole?: UserRole
+  ) => {
+    const newEntry: ActivityItem = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      time: new Date().toLocaleString(),
+      actor: actorName || currentUserProfile.name,
+      role: actorRole || currentUserProfile.role,
+      action,
+      module,
+    };
+
+    setActivityLog((prev) => [newEntry, ...prev].slice(0, 200));
+  };
 
   useEffect(() => {
     const getSession = async () => {
@@ -120,10 +378,11 @@ export default function TumulLegalV3() {
       } = await supabase.auth.getSession();
 
       setSession(session);
-      setLoading(false);
 
       if (session) {
         await loadAllData();
+      } else {
+        setLoading(false);
       }
     };
 
@@ -131,37 +390,45 @@ export default function TumulLegalV3() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_: unknown, session: any) => {
-      setSession(session);
-      setLoading(false);
+    } = supabase.auth.onAuthStateChange(async (_event: string, nextSession: any) => {
+      setSession(nextSession);
 
-      if (session) {
+      if (nextSession) {
         await loadAllData();
       } else {
         setMatters([]);
         setClients([]);
         setInvoices([]);
+        setStaffUsers([]);
+        setLoading(false);
       }
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
-  const loadAllData = async () => {
-    setLoading(true);
+  useEffect(() => {
+    if (!session?.user?.email || staffUsers.length === 0) return;
 
-    const [mattersRes, clientsRes, invoicesRes] = await Promise.all([
-      supabase.from("matters").select("*").order("id", { ascending: false }),
-      supabase.from("clients").select("*").order("id", { ascending: false }),
-      supabase.from("invoices").select("*").order("id", { ascending: false }),
-    ]);
+    const matched = staffUsers.find(
+      (staff) => staff.email.toLowerCase() === session.user.email.toLowerCase()
+    );
 
-    if (!mattersRes.error) setMatters((mattersRes.data as Matter[]) || []);
-    if (!clientsRes.error) setClients((clientsRes.data as Client[]) || []);
-    if (!invoicesRes.error) setInvoices((invoicesRes.data as Invoice[]) || []);
+    if (matched && matched.is_active === false) {
+      supabase.auth.signOut();
+      alert("Your account has been deactivated. Please contact the administrator.");
+    }
+  }, [session, staffUsers]);
 
-    setLoading(false);
-  };
+  useEffect(() => {
+    if (!session) return;
+    if (activeTab === "docket" && !permissions.docket) setActiveTab("dashboard");
+    if (activeTab === "clients" && !permissions.clients) setActiveTab("dashboard");
+    if (activeTab === "billing" && !permissions.billing) setActiveTab("dashboard");
+    if (activeTab === "reports" && !permissions.reports) setActiveTab("dashboard");
+    if (activeTab === "users" && !permissions.users) setActiveTab("dashboard");
+    if (activeTab === "activity" && !permissions.activity) setActiveTab("dashboard");
+  }, [activeTab, permissions, session]);
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -203,6 +470,7 @@ export default function TumulLegalV3() {
   };
 
   const handleLogout = async () => {
+    logActivity("Logged out of system", "Authentication");
     await supabase.auth.signOut();
   };
 
@@ -282,6 +550,11 @@ export default function TumulLegalV3() {
   }, [clients]);
 
   const handleAddMatter = async () => {
+    if (!permissions.addMatter) {
+      alert("You do not have permission to add matters.");
+      return;
+    }
+
     if (
       !matterForm.matter_no ||
       !matterForm.client_name ||
@@ -309,21 +582,7 @@ export default function TumulLegalV3() {
       return;
     }
 
-    const existingClient = clients.find(
-      (client) =>
-        client.name.trim().toLowerCase() ===
-        matterForm.client_name.trim().toLowerCase()
-    );
-
-    if (existingClient) {
-      await supabase
-        .from("clients")
-        .update({
-          matter_count: (existingClient.matter_count || 0) + 1,
-          last_contact: new Date().toISOString().slice(0, 10),
-        })
-        .eq("id", existingClient.id);
-    }
+    logActivity(`Created matter ${matterForm.matter_no}`, "Case Docket");
 
     setMatterForm({
       matter_no: "",
@@ -341,6 +600,11 @@ export default function TumulLegalV3() {
   };
 
   const handleAddClient = async () => {
+    if (!permissions.addClient) {
+      alert("You do not have permission to add clients.");
+      return;
+    }
+
     if (!clientForm.name || !clientForm.phone) {
       alert("Please fill in client name and phone.");
       return;
@@ -361,6 +625,8 @@ export default function TumulLegalV3() {
       return;
     }
 
+    logActivity(`Created client ${clientForm.name}`, "Clients");
+
     setClientForm({
       name: "",
       phone: "",
@@ -373,6 +639,11 @@ export default function TumulLegalV3() {
   };
 
   const handleAddInvoice = async () => {
+    if (!permissions.addInvoice) {
+      alert("You do not have permission to create invoices.");
+      return;
+    }
+
     if (
       !invoiceForm.invoice_no ||
       !invoiceForm.client_name ||
@@ -399,6 +670,8 @@ export default function TumulLegalV3() {
       return;
     }
 
+    logActivity(`Created invoice ${invoiceForm.invoice_no}`, "Billing");
+
     setInvoiceForm({
       invoice_no: "",
       client_name: "",
@@ -412,10 +685,200 @@ export default function TumulLegalV3() {
     await loadAllData();
   };
 
+  const handleAddStaffUser = async () => {
+    if (currentUserProfile.role !== "Super Admin") {
+      alert("Only Super Admin can add users.");
+      return;
+    }
+
+    if (!staffForm.full_name || !staffForm.email || !staffForm.role) {
+      alert("Please fill in full name, email and role.");
+      return;
+    }
+
+    const { error } = await supabase.from("staff_users").insert({
+      full_name: staffForm.full_name,
+      email: staffForm.email.toLowerCase(),
+      role: staffForm.role,
+      is_active: true,
+      created_by: currentUserProfile.email,
+    });
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    logActivity(`Added staff user ${staffForm.full_name}`, "Users");
+
+    setStaffForm({
+      full_name: "",
+      email: "",
+      role: "Viewer",
+    });
+
+    await loadStaffUsers();
+  };
+
+  const handleToggleStaffStatus = async (user: StaffUser) => {
+    if (currentUserProfile.role !== "Super Admin") {
+      alert("Only Super Admin can manage users.");
+      return;
+    }
+
+    if (user.email.toLowerCase() === "mek@tumullegal.com") {
+      alert("Super Admin account cannot be deactivated here.");
+      return;
+    }
+
+    const { error } = await supabase
+      .from("staff_users")
+      .update({ is_active: !(user.is_active !== false) })
+      .eq("email", user.email);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    logActivity(
+      `${user.is_active !== false ? "Deactivated" : "Activated"} user ${user.full_name}`,
+      "Users"
+    );
+
+    await loadStaffUsers();
+  };
+
+  const handleDeleteStaffUser = async (user: StaffUser) => {
+    if (currentUserProfile.role !== "Super Admin") {
+      alert("Only Super Admin can delete users.");
+      return;
+    }
+
+    if (user.email.toLowerCase() === "mek@tumullegal.com") {
+      alert("Super Admin account cannot be deleted here.");
+      return;
+    }
+
+    const confirmed = window.confirm(`Delete ${user.full_name}?`);
+    if (!confirmed) return;
+
+    const { error } = await supabase
+      .from("staff_users")
+      .delete()
+      .eq("email", user.email);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    logActivity(`Deleted user ${user.full_name}`, "Users");
+
+    await loadStaffUsers();
+  };
+
+  const handleExportMatters = () => {
+    if (!permissions.exportData) {
+      alert("You do not have permission to export data.");
+      return;
+    }
+
+    downloadCsv(
+      "tumul-matters.csv",
+      filteredMatters.map((matter) => ({
+        matter_no: matter.matter_no,
+        client_name: matter.client_name,
+        case_type: matter.case_type,
+        status: matter.status,
+        next_step: matter.next_step,
+        assigned_lawyer: matter.assigned_lawyer,
+        court_date: matter.court_date,
+        cost_estimate: matter.cost_estimate,
+        priority: matter.priority,
+      }))
+    );
+
+    logActivity("Exported matter list to CSV", "Case Docket");
+  };
+
+  const handleExportClients = () => {
+    if (!permissions.exportData) {
+      alert("You do not have permission to export data.");
+      return;
+    }
+
+    downloadCsv(
+      "tumul-clients.csv",
+      filteredClients.map((client) => ({
+        name: client.name,
+        phone: client.phone,
+        email: client.email,
+        address: client.address,
+        matter_count: client.matter_count,
+        last_contact: client.last_contact,
+        source: client.source,
+      }))
+    );
+
+    logActivity("Exported client list to CSV", "Clients");
+  };
+
+  const handleExportInvoices = () => {
+    if (!permissions.exportData) {
+      alert("You do not have permission to export data.");
+      return;
+    }
+
+    downloadCsv(
+      "tumul-invoices.csv",
+      filteredInvoices.map((invoice) => ({
+        invoice_no: invoice.invoice_no,
+        client_name: invoice.client_name,
+        matter_no: invoice.matter_no,
+        amount: invoice.amount,
+        status: invoice.status,
+        issued_date: invoice.issued_date,
+        due_date: invoice.due_date,
+      }))
+    );
+
+    logActivity("Exported invoice list to CSV", "Billing");
+  };
+
+  const handleExportActivity = () => {
+    if (!permissions.exportData) {
+      alert("You do not have permission to export data.");
+      return;
+    }
+
+    downloadCsv(
+      "tumul-activity-log.csv",
+      activityLog.map((item) => ({
+        time: item.time,
+        actor: item.actor,
+        role: item.role,
+        action: item.action,
+        module: item.module,
+      }))
+    );
+
+    logActivity("Exported activity log to CSV", "Activity");
+  };
+
+  const handlePrint = (sectionName: string) => {
+    if (!permissions.printData) {
+      alert("You do not have permission to print.");
+      return;
+    }
+
+    logActivity(`Printed ${sectionName}`, sectionName);
+    window.print();
+  };
+
   const getStatusClass = (status: string) => {
     switch (status) {
       case "Open":
-      case "Pending":
       case "Unpaid":
         return "bg-amber-400/15 text-amber-200 border border-amber-400/30";
       case "In Progress":
@@ -424,7 +887,6 @@ export default function TumulLegalV3() {
         return "bg-sky-400/15 text-sky-200 border border-sky-400/30";
       case "Paid":
       case "Closed":
-      case "Done":
         return "bg-emerald-400/15 text-emerald-200 border border-emerald-400/30";
       case "Awaiting Client":
         return "bg-violet-400/15 text-violet-200 border border-violet-400/30";
@@ -442,9 +904,45 @@ export default function TumulLegalV3() {
       case "Medium":
         return "bg-orange-400/15 text-orange-200 border border-orange-400/30";
       case "Low":
-        return "bg-slate-400/15 text-slate-200 border border-slate-400/30";
       default:
-        return "bg-white/10 text-slate-200 border border-white/10";
+        return "bg-slate-400/15 text-slate-200 border border-slate-400/30";
+    }
+  };
+
+  const getRoleClass = (role: UserRole) => {
+    switch (role) {
+      case "Super Admin":
+        return "bg-cyan-400/15 text-cyan-200 border border-cyan-400/30";
+      case "Lawyer":
+        return "bg-blue-400/15 text-blue-200 border border-blue-400/30";
+      case "Secretary":
+        return "bg-violet-400/15 text-violet-200 border border-violet-400/30";
+      case "Billing":
+        return "bg-emerald-400/15 text-emerald-200 border border-emerald-400/30";
+      case "Viewer":
+      default:
+        return "bg-slate-400/15 text-slate-200 border border-slate-400/30";
+    }
+  };
+
+  const canAccessTab = (tab: Tab) => {
+    switch (tab) {
+      case "dashboard":
+        return permissions.dashboard;
+      case "docket":
+        return permissions.docket;
+      case "clients":
+        return permissions.clients;
+      case "billing":
+        return permissions.billing;
+      case "reports":
+        return permissions.reports;
+      case "users":
+        return permissions.users;
+      case "activity":
+        return permissions.activity;
+      default:
+        return false;
     }
   };
 
@@ -454,6 +952,12 @@ export default function TumulLegalV3() {
     "w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder:text-slate-400 outline-none transition focus:border-cyan-400/60 focus:bg-white/10";
   const sectionTitle = "text-lg font-semibold text-white";
   const muted = "text-sm text-slate-400";
+  const buttonClass =
+    "rounded-2xl px-4 py-3 text-sm font-semibold transition";
+  const secondaryButton =
+    `${buttonClass} border border-white/10 bg-white/5 text-white hover:bg-white/10`;
+  const primaryButton =
+    `${buttonClass} bg-gradient-to-r from-cyan-400 to-blue-500 text-slate-950`;
 
   const NavButton = ({
     id,
@@ -463,19 +967,23 @@ export default function TumulLegalV3() {
     id: Tab;
     label: string;
     icon: string;
-  }) => (
-    <button
-      onClick={() => setActiveTab(id)}
-      className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold transition ${
-        activeTab === id
-          ? "bg-gradient-to-r from-cyan-400 to-blue-500 text-slate-950 shadow-lg"
-          : "bg-white/5 text-slate-200 hover:bg-white/10"
-      }`}
-    >
-      <span className="text-base">{icon}</span>
-      <span>{label}</span>
-    </button>
-  );
+  }) => {
+    if (!canAccessTab(id)) return null;
+
+    return (
+      <button
+        onClick={() => setActiveTab(id)}
+        className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold transition ${
+          activeTab === id
+            ? "bg-gradient-to-r from-cyan-400 to-blue-500 text-slate-950 shadow-lg"
+            : "bg-white/5 text-slate-200 hover:bg-white/10"
+        }`}
+      >
+        <span className="text-base">{icon}</span>
+        <span>{label}</span>
+      </button>
+    );
+  };
 
   const StatCard = ({
     label,
@@ -512,17 +1020,14 @@ export default function TumulLegalV3() {
               <p className="text-sm font-semibold uppercase tracking-[0.18em] text-cyan-400">
                 {branding.platformName || "MTEC"}
               </p>
-
               <h1 className="mt-2 text-3xl font-bold tracking-tight text-white">
                 MTEC – {branding.clientName || "Tumul Legal"}
               </h1>
-
               <p className="mt-2 text-base text-slate-300">
                 Legal Management System
               </p>
-
               <p className="mt-3 text-sm text-slate-400">
-                Secure access for authorized staff only
+                Secure role-based access for authorized staff
               </p>
             </div>
 
@@ -625,6 +1130,27 @@ export default function TumulLegalV3() {
             </p>
           </div>
 
+          <div className={`${glassCard} mb-6 p-4`}>
+            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+              Logged In User
+            </p>
+            <div className="mt-3">
+              <p className="text-base font-bold text-white">
+                {currentUserProfile.name}
+              </p>
+              <p className="mt-1 text-sm text-slate-400">
+                {currentUserProfile.email}
+              </p>
+              <span
+                className={`mt-3 inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getRoleClass(
+                  currentUserProfile.role
+                )}`}
+              >
+                {currentUserProfile.role}
+              </span>
+            </div>
+          </div>
+
           <div className={`${glassCard} mb-6 p-3`}>
             <nav className="space-y-2">
               <NavButton id="dashboard" label="Dashboard" icon="◫" />
@@ -632,6 +1158,8 @@ export default function TumulLegalV3() {
               <NavButton id="clients" label="Clients" icon="👥" />
               <NavButton id="billing" label="Billing" icon="🧾" />
               <NavButton id="reports" label="Reports" icon="📊" />
+              <NavButton id="users" label="Users & Roles" icon="🔐" />
+              <NavButton id="activity" label="Activity Log" icon="📝" />
             </nav>
           </div>
 
@@ -656,12 +1184,14 @@ export default function TumulLegalV3() {
                   {totalClients}
                 </span>
               </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-slate-300">Outstanding</span>
-                <span className="text-sm font-bold text-cyan-300">
-                  {currency(outstandingValue)}
-                </span>
-              </div>
+              {permissions.seeFinancials && (
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-slate-300">Outstanding</span>
+                  <span className="text-sm font-bold text-cyan-300">
+                    {currency(outstandingValue)}
+                  </span>
+                </div>
+              )}
             </div>
 
             <button
@@ -684,7 +1214,7 @@ export default function TumulLegalV3() {
                   Legal Operations Control Panel
                 </h2>
                 <p className="mt-2 max-w-2xl text-sm text-slate-400">
-                  Real database-backed legal management dashboard.
+                  Role-based legal management dashboard with export, print and activity tracking.
                 </p>
               </div>
 
@@ -707,10 +1237,10 @@ export default function TumulLegalV3() {
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
                   <p className="text-xs uppercase tracking-wide text-slate-400">
-                    Clients
+                    Role
                   </p>
-                  <p className="mt-2 text-xl font-bold text-white">
-                    {totalClients}
+                  <p className="mt-2 text-sm font-bold text-white">
+                    {currentUserProfile.role}
                   </p>
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
@@ -740,21 +1270,39 @@ export default function TumulLegalV3() {
                 />
                 <StatCard
                   label="Outstanding Billing"
-                  value={currency(outstandingValue)}
+                  value={permissions.seeFinancials ? currency(outstandingValue) : "Restricted"}
                   subtext="Unpaid and part paid invoices"
                 />
                 <StatCard
                   label="Collected Value"
-                  value={currency(collectedValue)}
+                  value={permissions.seeFinancials ? currency(collectedValue) : "Restricted"}
                   subtext="Invoices marked as paid"
                 />
               </section>
 
               <section className="grid grid-cols-1 gap-6 xl:grid-cols-3">
                 <div className={`${glassCard} p-5 xl:col-span-2`}>
-                  <div className="mb-4">
-                    <h3 className={sectionTitle}>Recent Matters</h3>
-                    <p className={muted}>Saved legal docket records</p>
+                  <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <h3 className={sectionTitle}>Recent Matters</h3>
+                      <p className={muted}>Saved legal docket records</p>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handlePrint("Dashboard")}
+                        className={secondaryButton}
+                      >
+                        Print
+                      </button>
+                      {permissions.exportData && (
+                        <button
+                          onClick={handleExportMatters}
+                          className={primaryButton}
+                        >
+                          Export Matters
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   <div className="overflow-x-auto">
@@ -823,7 +1371,7 @@ export default function TumulLegalV3() {
             </div>
           )}
 
-          {activeTab === "docket" && (
+          {activeTab === "docket" && permissions.docket && (
             <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
               <div className={`${glassCard} p-5`}>
                 <div className="mb-4">
@@ -842,6 +1390,7 @@ export default function TumulLegalV3() {
                     }
                     placeholder="Matter Number"
                     className={inputClass}
+                    disabled={!permissions.addMatter}
                   />
                   <input
                     value={matterForm.client_name}
@@ -853,6 +1402,7 @@ export default function TumulLegalV3() {
                     }
                     placeholder="Client Name"
                     className={inputClass}
+                    disabled={!permissions.addMatter}
                   />
                   <input
                     value={matterForm.case_type}
@@ -864,6 +1414,7 @@ export default function TumulLegalV3() {
                     }
                     placeholder="Case Type"
                     className={inputClass}
+                    disabled={!permissions.addMatter}
                   />
                   <select
                     value={matterForm.status}
@@ -874,6 +1425,7 @@ export default function TumulLegalV3() {
                       })
                     }
                     className={inputClass}
+                    disabled={!permissions.addMatter}
                   >
                     <option className="bg-slate-900">Open</option>
                     <option className="bg-slate-900">In Progress</option>
@@ -892,6 +1444,7 @@ export default function TumulLegalV3() {
                     }
                     placeholder="Next Legal Step"
                     className={inputClass}
+                    disabled={!permissions.addMatter}
                   />
                   <input
                     value={matterForm.assigned_lawyer}
@@ -903,6 +1456,7 @@ export default function TumulLegalV3() {
                     }
                     placeholder="Assigned Lawyer"
                     className={inputClass}
+                    disabled={!permissions.addMatter}
                   />
                   <input
                     type="date"
@@ -914,6 +1468,7 @@ export default function TumulLegalV3() {
                       })
                     }
                     className={inputClass}
+                    disabled={!permissions.addMatter}
                   />
                   <input
                     type="number"
@@ -926,6 +1481,7 @@ export default function TumulLegalV3() {
                     }
                     placeholder="Estimated Legal Cost"
                     className={inputClass}
+                    disabled={!permissions.addMatter}
                   />
                   <select
                     value={matterForm.priority}
@@ -936,6 +1492,7 @@ export default function TumulLegalV3() {
                       })
                     }
                     className={inputClass}
+                    disabled={!permissions.addMatter}
                   >
                     <option className="bg-slate-900">High</option>
                     <option className="bg-slate-900">Medium</option>
@@ -943,9 +1500,10 @@ export default function TumulLegalV3() {
                   </select>
                   <button
                     onClick={handleAddMatter}
-                    className="w-full rounded-2xl bg-gradient-to-r from-cyan-400 to-blue-500 px-4 py-3 font-semibold text-slate-950"
+                    disabled={!permissions.addMatter}
+                    className={`w-full ${permissions.addMatter ? primaryButton : secondaryButton}`}
                   >
-                    Save Matter
+                    {permissions.addMatter ? "Save Matter" : "Read Only Access"}
                   </button>
                 </div>
               </div>
@@ -956,12 +1514,28 @@ export default function TumulLegalV3() {
                     <h3 className={sectionTitle}>Digital Case Docket</h3>
                     <p className={muted}>Search legal matters</p>
                   </div>
-                  <input
-                    value={matterSearch}
-                    onChange={(e) => setMatterSearch(e.target.value)}
-                    placeholder="Search matter, client, lawyer, case type..."
-                    className={`${inputClass} lg:max-w-md`}
-                  />
+                  <div className="flex flex-col gap-3 lg:flex-row">
+                    <input
+                      value={matterSearch}
+                      onChange={(e) => setMatterSearch(e.target.value)}
+                      placeholder="Search matter, client, lawyer, case type..."
+                      className={`${inputClass} lg:min-w-[300px]`}
+                    />
+                    <button
+                      onClick={() => handlePrint("Case Docket")}
+                      className={secondaryButton}
+                    >
+                      Print
+                    </button>
+                    {permissions.exportData && (
+                      <button
+                        onClick={handleExportMatters}
+                        className={primaryButton}
+                      >
+                        Export
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 <div className="overflow-x-auto">
@@ -1030,7 +1604,7 @@ export default function TumulLegalV3() {
             </div>
           )}
 
-          {activeTab === "clients" && (
+          {activeTab === "clients" && permissions.clients && (
             <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
               <div className={`${glassCard} p-5`}>
                 <div className="mb-4">
@@ -1046,6 +1620,7 @@ export default function TumulLegalV3() {
                     }
                     placeholder="Full Name / Business Name"
                     className={inputClass}
+                    disabled={!permissions.addClient}
                   />
                   <input
                     value={clientForm.phone}
@@ -1054,6 +1629,7 @@ export default function TumulLegalV3() {
                     }
                     placeholder="Phone Number"
                     className={inputClass}
+                    disabled={!permissions.addClient}
                   />
                   <input
                     value={clientForm.email}
@@ -1062,6 +1638,7 @@ export default function TumulLegalV3() {
                     }
                     placeholder="Email Address"
                     className={inputClass}
+                    disabled={!permissions.addClient}
                   />
                   <input
                     value={clientForm.address}
@@ -1070,6 +1647,7 @@ export default function TumulLegalV3() {
                     }
                     placeholder="Address"
                     className={inputClass}
+                    disabled={!permissions.addClient}
                   />
                   <select
                     value={clientForm.source}
@@ -1077,6 +1655,7 @@ export default function TumulLegalV3() {
                       setClientForm({ ...clientForm, source: e.target.value })
                     }
                     className={inputClass}
+                    disabled={!permissions.addClient}
                   >
                     <option className="bg-slate-900">Referral</option>
                     <option className="bg-slate-900">Friend</option>
@@ -1087,9 +1666,10 @@ export default function TumulLegalV3() {
                   </select>
                   <button
                     onClick={handleAddClient}
-                    className="w-full rounded-2xl bg-gradient-to-r from-cyan-400 to-blue-500 px-4 py-3 font-semibold text-slate-950"
+                    disabled={!permissions.addClient}
+                    className={`w-full ${permissions.addClient ? primaryButton : secondaryButton}`}
                   >
-                    Save Client
+                    {permissions.addClient ? "Save Client" : "Read Only Access"}
                   </button>
                 </div>
               </div>
@@ -1100,12 +1680,28 @@ export default function TumulLegalV3() {
                     <h3 className={sectionTitle}>Client Management</h3>
                     <p className={muted}>Saved client profiles</p>
                   </div>
-                  <input
-                    value={clientSearch}
-                    onChange={(e) => setClientSearch(e.target.value)}
-                    placeholder="Search client, phone, email..."
-                    className={`${inputClass} lg:max-w-md`}
-                  />
+                  <div className="flex flex-col gap-3 lg:flex-row">
+                    <input
+                      value={clientSearch}
+                      onChange={(e) => setClientSearch(e.target.value)}
+                      placeholder="Search client, phone, email..."
+                      className={`${inputClass} lg:min-w-[300px]`}
+                    />
+                    <button
+                      onClick={() => handlePrint("Clients")}
+                      className={secondaryButton}
+                    >
+                      Print
+                    </button>
+                    {permissions.exportData && (
+                      <button
+                        onClick={handleExportClients}
+                        className={primaryButton}
+                      >
+                        Export
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -1158,7 +1754,7 @@ export default function TumulLegalV3() {
             </div>
           )}
 
-          {activeTab === "billing" && (
+          {activeTab === "billing" && permissions.billing && (
             <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
               <div className={`${glassCard} p-5`}>
                 <div className="mb-4">
@@ -1177,6 +1773,7 @@ export default function TumulLegalV3() {
                     }
                     placeholder="Invoice Number"
                     className={inputClass}
+                    disabled={!permissions.addInvoice}
                   />
                   <input
                     value={invoiceForm.client_name}
@@ -1188,6 +1785,7 @@ export default function TumulLegalV3() {
                     }
                     placeholder="Client Name"
                     className={inputClass}
+                    disabled={!permissions.addInvoice}
                   />
                   <input
                     value={invoiceForm.matter_no}
@@ -1199,6 +1797,7 @@ export default function TumulLegalV3() {
                     }
                     placeholder="Matter Number"
                     className={inputClass}
+                    disabled={!permissions.addInvoice}
                   />
                   <input
                     type="number"
@@ -1211,19 +1810,18 @@ export default function TumulLegalV3() {
                     }
                     placeholder="Amount"
                     className={inputClass}
+                    disabled={!permissions.addInvoice}
                   />
                   <select
                     value={invoiceForm.status}
                     onChange={(e) =>
                       setInvoiceForm({
                         ...invoiceForm,
-                        status: e.target.value as
-                          | "Paid"
-                          | "Unpaid"
-                          | "Part Paid",
+                        status: e.target.value as InvoiceStatus,
                       })
                     }
                     className={inputClass}
+                    disabled={!permissions.addInvoice}
                   >
                     <option className="bg-slate-900">Unpaid</option>
                     <option className="bg-slate-900">Part Paid</option>
@@ -1239,6 +1837,7 @@ export default function TumulLegalV3() {
                       })
                     }
                     className={inputClass}
+                    disabled={!permissions.addInvoice}
                   />
                   <input
                     type="date"
@@ -1250,12 +1849,14 @@ export default function TumulLegalV3() {
                       })
                     }
                     className={inputClass}
+                    disabled={!permissions.addInvoice}
                   />
                   <button
                     onClick={handleAddInvoice}
-                    className="w-full rounded-2xl bg-gradient-to-r from-cyan-400 to-blue-500 px-4 py-3 font-semibold text-slate-950"
+                    disabled={!permissions.addInvoice}
+                    className={`w-full ${permissions.addInvoice ? primaryButton : secondaryButton}`}
                   >
-                    Save Invoice
+                    {permissions.addInvoice ? "Save Invoice" : "Read Only Access"}
                   </button>
                 </div>
               </div>
@@ -1266,12 +1867,28 @@ export default function TumulLegalV3() {
                     <h3 className={sectionTitle}>Invoice & Billing Tracker</h3>
                     <p className={muted}>Saved financial records</p>
                   </div>
-                  <input
-                    value={invoiceSearch}
-                    onChange={(e) => setInvoiceSearch(e.target.value)}
-                    placeholder="Search invoice, client, matter..."
-                    className={`${inputClass} lg:max-w-md`}
-                  />
+                  <div className="flex flex-col gap-3 lg:flex-row">
+                    <input
+                      value={invoiceSearch}
+                      onChange={(e) => setInvoiceSearch(e.target.value)}
+                      placeholder="Search invoice, client, matter..."
+                      className={`${inputClass} lg:min-w-[300px]`}
+                    />
+                    <button
+                      onClick={() => handlePrint("Billing")}
+                      className={secondaryButton}
+                    >
+                      Print
+                    </button>
+                    {permissions.exportData && (
+                      <button
+                        onClick={handleExportInvoices}
+                        className={primaryButton}
+                      >
+                        Export
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 <div className="mb-5 grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -1349,8 +1966,38 @@ export default function TumulLegalV3() {
             </div>
           )}
 
-          {activeTab === "reports" && (
+          {activeTab === "reports" && permissions.reports && (
             <div className="space-y-6">
+              <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
+                <button
+                  onClick={() => handlePrint("Reports")}
+                  className={secondaryButton}
+                >
+                  Print Reports
+                </button>
+                {permissions.exportData && (
+                  <button
+                    onClick={() =>
+                      downloadCsv("tumul-reports-summary.csv", [
+                        {
+                          total_matters: totalMatters,
+                          open_matters: openMatters,
+                          total_clients: totalClients,
+                          total_invoiced: totalInvoiceValue,
+                          outstanding_value: outstandingValue,
+                          collected_value: collectedValue,
+                          urgent_matters: urgentMatters,
+                          upcoming_court_dates: upcomingCourtDates,
+                        },
+                      ])
+                    }
+                    className={primaryButton}
+                  >
+                    Export Reports
+                  </button>
+                )}
+              </div>
+
               <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
                 <StatCard
                   label="Open Matters"
@@ -1424,31 +2071,223 @@ export default function TumulLegalV3() {
                 </div>
               </div>
 
+              {permissions.seeFinancials && (
+                <div className={`${glassCard} p-5`}>
+                  <div className="mb-4">
+                    <h3 className={sectionTitle}>Financial Summary</h3>
+                    <p className={muted}>Billing overview</p>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                    <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
+                      <p className="text-sm text-slate-400">Total Invoiced</p>
+                      <h4 className="mt-2 text-2xl font-bold text-white">
+                        {currency(totalInvoiceValue)}
+                      </h4>
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
+                      <p className="text-sm text-slate-400">Outstanding Value</p>
+                      <h4 className="mt-2 text-2xl font-bold text-cyan-300">
+                        {currency(outstandingValue)}
+                      </h4>
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
+                      <p className="text-sm text-slate-400">Collected Value</p>
+                      <h4 className="mt-2 text-2xl font-bold text-white">
+                        {currency(collectedValue)}
+                      </h4>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === "users" && permissions.users && (
+            <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
               <div className={`${glassCard} p-5`}>
                 <div className="mb-4">
-                  <h3 className={sectionTitle}>Financial Summary</h3>
-                  <p className={muted}>Billing overview</p>
+                  <h3 className={sectionTitle}>Add Staff User</h3>
+                  <p className={muted}>
+                    Super Admin can add users and assign roles here.
+                  </p>
                 </div>
 
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                  <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
-                    <p className="text-sm text-slate-400">Total Invoiced</p>
-                    <h4 className="mt-2 text-2xl font-bold text-white">
-                      {currency(totalInvoiceValue)}
-                    </h4>
+                <div className="space-y-3">
+                  <input
+                    value={staffForm.full_name}
+                    onChange={(e) =>
+                      setStaffForm({ ...staffForm, full_name: e.target.value })
+                    }
+                    placeholder="Full Name"
+                    className={inputClass}
+                  />
+                  <input
+                    value={staffForm.email}
+                    onChange={(e) =>
+                      setStaffForm({ ...staffForm, email: e.target.value })
+                    }
+                    placeholder="Email Address"
+                    className={inputClass}
+                  />
+                  <select
+                    value={staffForm.role}
+                    onChange={(e) =>
+                      setStaffForm({ ...staffForm, role: e.target.value as UserRole })
+                    }
+                    className={inputClass}
+                  >
+                    <option className="bg-slate-900">Super Admin</option>
+                    <option className="bg-slate-900">Lawyer</option>
+                    <option className="bg-slate-900">Secretary</option>
+                    <option className="bg-slate-900">Billing</option>
+                    <option className="bg-slate-900">Viewer</option>
+                  </select>
+
+                  <button onClick={handleAddStaffUser} className={`w-full ${primaryButton}`}>
+                    Add User
+                  </button>
+                </div>
+
+                <div className="mt-5 rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-4 text-sm text-cyan-100">
+                  Added users must sign up using the same email address to access the system.
+                </div>
+              </div>
+
+              <div className={`${glassCard} p-5 xl:col-span-2`}>
+                <div className="mb-4">
+                  <h3 className={sectionTitle}>User Roles & Access</h3>
+                  <p className={muted}>
+                    Activate, deactivate or remove users here.
+                  </p>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-white/10 text-left text-slate-400">
+                        <th className="px-3 py-3">Name</th>
+                        <th className="px-3 py-3">Email</th>
+                        <th className="px-3 py-3">Role</th>
+                        <th className="px-3 py-3">Status</th>
+                        <th className="px-3 py-3">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {staffUsers.map((staff) => (
+                        <tr
+                          key={staff.email}
+                          className="border-b border-white/5 text-slate-200"
+                        >
+                          <td className="px-3 py-4 font-semibold text-white">
+                            {staff.full_name}
+                          </td>
+                          <td className="px-3 py-4">{staff.email}</td>
+                          <td className="px-3 py-4">
+                            <span
+                              className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getRoleClass(
+                                staff.role
+                              )}`}
+                            >
+                              {staff.role}
+                            </span>
+                          </td>
+                          <td className="px-3 py-4">
+                            <span
+                              className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
+                                staff.is_active !== false
+                                  ? "bg-emerald-400/15 text-emerald-200 border border-emerald-400/30"
+                                  : "bg-rose-400/15 text-rose-200 border border-rose-400/30"
+                              }`}
+                            >
+                              {staff.is_active !== false ? "Active" : "Inactive"}
+                            </span>
+                          </td>
+                          <td className="px-3 py-4">
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                onClick={() => handleToggleStaffStatus(staff)}
+                                className={secondaryButton}
+                              >
+                                {staff.is_active !== false ? "Deactivate" : "Activate"}
+                              </button>
+                              <button
+                                onClick={() => handleDeleteStaffUser(staff)}
+                                className="rounded-2xl px-4 py-3 text-sm font-semibold transition border border-rose-400/30 bg-rose-400/10 text-rose-200 hover:bg-rose-400/20"
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === "activity" && permissions.activity && (
+            <div className="space-y-6">
+              <div className={`${glassCard} p-5`}>
+                <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h3 className={sectionTitle}>Activity Log</h3>
+                    <p className={muted}>
+                      Tracks major actions done in the system.
+                    </p>
                   </div>
-                  <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
-                    <p className="text-sm text-slate-400">Outstanding Value</p>
-                    <h4 className="mt-2 text-2xl font-bold text-cyan-300">
-                      {currency(outstandingValue)}
-                    </h4>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handlePrint("Activity Log")}
+                      className={secondaryButton}
+                    >
+                      Print
+                    </button>
+                    {permissions.exportData && (
+                      <button
+                        onClick={handleExportActivity}
+                        className={primaryButton}
+                      >
+                        Export Activity
+                      </button>
+                    )}
                   </div>
-                  <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
-                    <p className="text-sm text-slate-400">Collected Value</p>
-                    <h4 className="mt-2 text-2xl font-bold text-white">
-                      {currency(collectedValue)}
-                    </h4>
-                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  {activityLog.length === 0 ? (
+                    <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-5 text-sm text-slate-400">
+                      No activity recorded yet.
+                    </div>
+                  ) : (
+                    activityLog.map((item) => (
+                      <div
+                        key={item.id}
+                        className="rounded-2xl border border-white/10 bg-white/5 px-4 py-4"
+                      >
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                          <div>
+                            <p className="text-sm font-semibold text-white">
+                              {item.action}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-400">
+                              {item.module}
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-sm text-slate-300">
+                              {item.actor}
+                            </p>
+                            <p className="text-xs text-slate-400">
+                              {item.role} • {item.time}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
             </div>
