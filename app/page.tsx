@@ -87,6 +87,17 @@ type ActivityItem = {
   module: string;
 };
 
+
+type MatterDeadline = {
+  id: number;
+  matter_id: number;
+  title: string;
+  deadline_date: string;
+  notes: string | null;
+  is_completed: boolean;
+  created_at?: string;
+};
+
 const currency = (value: number) =>
   new Intl.NumberFormat("en-PG", {
     style: "currency",
@@ -229,7 +240,7 @@ const sectionToTab = (sectionName: string): Tab => {
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-export default function TumulLegalV3() {
+export default function TumulLegalV4() {
   const [session, setSession] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [authMode, setAuthMode] = useState<AuthMode>("login");
@@ -263,6 +274,9 @@ export default function TumulLegalV3() {
     cost_estimate: "",
     priority: "Medium" as Priority,
   });
+  const [selectedMatter, setSelectedMatter] = useState<Matter | null>(null);
+  const [isMatterPanelOpen, setIsMatterPanelOpen] = useState(false);
+  const [isSavingMatter, setIsSavingMatter] = useState(false);
 
   const [clientForm, setClientForm] = useState({
     name: "",
@@ -288,6 +302,16 @@ export default function TumulLegalV3() {
     role: "Viewer" as UserRole,
   });
 
+
+  const [deadlines, setDeadlines] = useState<MatterDeadline[]>([]);
+  const [matterDeadlines, setMatterDeadlines] = useState<MatterDeadline[]>([]);
+  const [deadlineForm, setDeadlineForm] = useState({
+    title: "",
+    deadline_date: "",
+    notes: "",
+  });
+  const [isSavingDeadline, setIsSavingDeadline] = useState(false);
+
   useEffect(() => {
     const savedTab = localStorage.getItem("activeTab");
     if (savedTab) setActiveTab(savedTab as Tab);
@@ -309,6 +333,46 @@ export default function TumulLegalV3() {
   useEffect(() => {
     localStorage.setItem("tumul_activity_log", JSON.stringify(activityLog));
   }, [activityLog]);
+
+  const normalizeDateOnly = (value?: string | null) => {
+    if (!value) return "";
+    return value.slice(0, 10);
+  };
+
+  const getTodayDateOnly = () => {
+    const now = new Date();
+    const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+    return local.toISOString().slice(0, 10);
+  };
+
+  const getDeadlineState = (deadline: MatterDeadline) => {
+    if (deadline.is_completed) return "Completed";
+
+    const today = getTodayDateOnly();
+    const diffMs =
+      new Date(normalizeDateOnly(deadline.deadline_date)).getTime() -
+      new Date(today).getTime();
+
+    const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+
+    if (diffDays < 0) return "Overdue";
+    if (diffDays <= 3) return "Urgent";
+    return "Upcoming";
+  };
+
+  const getDeadlineBadgeClass = (state: string) => {
+    switch (state) {
+      case "Overdue":
+        return "bg-rose-400/15 text-rose-200 border border-rose-400/30";
+      case "Urgent":
+        return "bg-orange-400/15 text-orange-200 border border-orange-400/30";
+      case "Completed":
+        return "bg-emerald-400/15 text-emerald-200 border border-emerald-400/30";
+      case "Upcoming":
+      default:
+        return "bg-sky-400/15 text-sky-200 border border-sky-400/30";
+    }
+  };
 
   const currentEmail = session?.user?.email?.toLowerCase?.() || "";
 
@@ -342,20 +406,28 @@ export default function TumulLegalV3() {
   const loadAllData = async () => {
     setLoading(true);
 
-    const [mattersRes, clientsRes, invoicesRes, staffRes] = await Promise.all([
-      supabase.from("matters").select("*").order("id", { ascending: false }),
-      supabase.from("clients").select("*").order("id", { ascending: false }),
-      supabase.from("invoices").select("*").order("id", { ascending: false }),
-      supabase
-        .from("staff_users")
-        .select("*")
-        .order("full_name", { ascending: true }),
-    ]);
+    const [mattersRes, clientsRes, invoicesRes, staffRes, deadlinesRes] =
+      await Promise.all([
+        supabase.from("matters").select("*").order("id", { ascending: false }),
+        supabase.from("clients").select("*").order("id", { ascending: false }),
+        supabase.from("invoices").select("*").order("id", { ascending: false }),
+        supabase
+          .from("staff_users")
+          .select("*")
+          .order("full_name", { ascending: true }),
+        supabase
+          .from("matter_deadlines")
+          .select("*")
+          .order("deadline_date", { ascending: true }),
+      ]);
 
     if (!mattersRes.error) setMatters((mattersRes.data as Matter[]) || []);
     if (!clientsRes.error) setClients((clientsRes.data as Client[]) || []);
     if (!invoicesRes.error) setInvoices((invoicesRes.data as Invoice[]) || []);
     if (!staffRes.error) setStaffUsers((staffRes.data as StaffUser[]) || []);
+    if (!deadlinesRes.error) {
+      setDeadlines((deadlinesRes.data as MatterDeadline[]) || []);
+    }
 
     setLoading(false);
   };
@@ -368,6 +440,30 @@ export default function TumulLegalV3() {
 
     if (!error) {
       setStaffUsers((data as StaffUser[]) || []);
+    }
+  };
+
+
+  const loadDeadlines = async () => {
+    const { data, error } = await supabase
+      .from("matter_deadlines")
+      .select("*")
+      .order("deadline_date", { ascending: true });
+
+    if (!error) {
+      setDeadlines((data as MatterDeadline[]) || []);
+    }
+  };
+
+  const loadDeadlinesForMatter = async (matterId: number) => {
+    const { data, error } = await supabase
+      .from("matter_deadlines")
+      .select("*")
+      .eq("matter_id", matterId)
+      .order("deadline_date", { ascending: true });
+
+    if (!error) {
+      setMatterDeadlines((data as MatterDeadline[]) || []);
     }
   };
 
@@ -558,6 +654,35 @@ export default function TumulLegalV3() {
     (m) => m.court_date && m.status !== "Closed"
   ).length;
 
+
+  const overdueDeadlines = deadlines.filter(
+    (deadline) => getDeadlineState(deadline) === "Overdue"
+  ).length;
+
+  const urgentDeadlines = deadlines.filter(
+    (deadline) => getDeadlineState(deadline) === "Urgent"
+  ).length;
+
+  const upcomingDeadlineItems = deadlines
+    .filter((deadline) => {
+      const state = getDeadlineState(deadline);
+      return state === "Overdue" || state === "Urgent" || state === "Upcoming";
+    })
+    .slice()
+    .sort((a, b) =>
+      normalizeDateOnly(a.deadline_date).localeCompare(normalizeDateOnly(b.deadline_date))
+    )
+    .slice(0, 5)
+    .map((deadline) => {
+      const matter = matters.find((item) => item.id === deadline.matter_id);
+      return {
+        ...deadline,
+        state: getDeadlineState(deadline),
+        matter_no: matter?.matter_no || `Matter #${deadline.matter_id}`,
+        client_name: matter?.client_name || "Unknown Client",
+      };
+    });
+
   const matterStatusSummary = useMemo(() => {
     return [
       "Open",
@@ -581,6 +706,203 @@ export default function TumulLegalV3() {
     );
   }, [clients]);
 
+
+  const canEditMatterDetails =
+    currentUserProfile.role === "Super Admin" ||
+    currentUserProfile.role === "Lawyer" ||
+    currentUserProfile.role === "Secretary";
+
+  const openMatterFile = async (matter: Matter) => {
+    setSelectedMatter({
+      ...matter,
+      summary: matter.summary || "",
+      next_step: matter.next_step || "",
+      court_date: matter.court_date || "",
+      cost_estimate: Number(matter.cost_estimate || 0),
+    });
+    setIsMatterPanelOpen(true);
+    setDeadlineForm({
+      title: "",
+      deadline_date: "",
+      notes: "",
+    });
+    await loadDeadlinesForMatter(matter.id);
+  };
+
+  const closeMatterFile = () => {
+    setSelectedMatter(null);
+    setIsMatterPanelOpen(false);
+    setMatterDeadlines([]);
+    setDeadlineForm({
+      title: "",
+      deadline_date: "",
+      notes: "",
+    });
+  };
+
+  function updateSelectedMatterField<K extends keyof Matter>(
+    field: K,
+    value: Matter[K]
+  ) {
+    setSelectedMatter((prev) => (prev ? { ...prev, [field]: value } : prev));
+  }
+
+  const handleSaveMatterDetails = async () => {
+    if (!selectedMatter) return;
+
+    if (!canEditMatterDetails) {
+      alert("You do not have permission to edit case files.");
+      return;
+    }
+
+    setIsSavingMatter(true);
+
+    const payload = {
+      matter_no: selectedMatter.matter_no,
+      client_name: selectedMatter.client_name,
+      case_type: selectedMatter.case_type,
+      status: selectedMatter.status,
+      next_step: selectedMatter.next_step,
+      summary: selectedMatter.summary,
+      assigned_lawyer: selectedMatter.assigned_lawyer,
+      court_date: selectedMatter.court_date || null,
+      cost_estimate: Number(selectedMatter.cost_estimate || 0),
+      priority: selectedMatter.priority,
+    };
+
+    const { error } = await supabase
+      .from("matters")
+      .update(payload)
+      .eq("id", selectedMatter.id);
+
+    setIsSavingMatter(false);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    setMatters((prev) =>
+      prev.map((matter) =>
+        matter.id === selectedMatter.id
+          ? {
+              ...matter,
+              ...payload,
+              court_date: selectedMatter.court_date || "",
+            }
+          : matter
+      )
+    );
+
+    logActivity(`Updated matter file ${selectedMatter.matter_no}`, "Case Docket");
+    alert("Case file updated successfully.");
+  };
+
+
+  const handleAddDeadline = async () => {
+    if (!selectedMatter) {
+      alert("Open a matter first.");
+      return;
+    }
+
+    if (!canEditMatterDetails) {
+      alert("You do not have permission to add deadlines.");
+      return;
+    }
+
+    if (!deadlineForm.title || !deadlineForm.deadline_date) {
+      alert("Please enter deadline title and date.");
+      return;
+    }
+
+    setIsSavingDeadline(true);
+
+    const payload = {
+      matter_id: selectedMatter.id,
+      title: deadlineForm.title,
+      deadline_date: deadlineForm.deadline_date,
+      notes: deadlineForm.notes || null,
+      is_completed: false,
+    };
+
+    const { error } = await supabase.from("matter_deadlines").insert(payload);
+
+    setIsSavingDeadline(false);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    logActivity(
+      `Added deadline "${deadlineForm.title}" to ${selectedMatter.matter_no}`,
+      "Deadlines"
+    );
+
+    setDeadlineForm({
+      title: "",
+      deadline_date: "",
+      notes: "",
+    });
+
+    await loadDeadlines();
+    await loadDeadlinesForMatter(selectedMatter.id);
+  };
+
+  const handleToggleDeadlineComplete = async (deadline: MatterDeadline) => {
+    if (!canEditMatterDetails) {
+      alert("You do not have permission to update deadlines.");
+      return;
+    }
+
+    const { error } = await supabase
+      .from("matter_deadlines")
+      .update({ is_completed: !deadline.is_completed })
+      .eq("id", deadline.id);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    logActivity(
+      `${deadline.is_completed ? "Re-opened" : "Completed"} deadline "${deadline.title}"`,
+      "Deadlines"
+    );
+
+    await loadDeadlines();
+    if (selectedMatter) {
+      await loadDeadlinesForMatter(selectedMatter.id);
+    }
+  };
+
+  const handleDeleteDeadline = async (deadline: MatterDeadline) => {
+    if (!canEditMatterDetails) {
+      alert("You do not have permission to delete deadlines.");
+      return;
+    }
+
+    const confirmed = window.confirm(`Delete deadline "${deadline.title}"?`);
+    if (!confirmed) return;
+
+    const { error } = await supabase
+      .from("matter_deadlines")
+      .delete()
+      .eq("id", deadline.id);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    logActivity(`Deleted deadline "${deadline.title}"`, "Deadlines");
+
+    await loadDeadlines();
+    if (selectedMatter) {
+      await loadDeadlinesForMatter(selectedMatter.id);
+    }
+  };
+
   const handleAddMatter = async () => {
     if (!permissions.addMatter) {
       alert("You do not have permission to add matters.");
@@ -603,6 +925,7 @@ export default function TumulLegalV3() {
       case_type: matterForm.case_type,
       status: matterForm.status,
       next_step: matterForm.next_step,
+      summary: matterForm.summary,
       assigned_lawyer: matterForm.assigned_lawyer,
       court_date: matterForm.court_date || null,
       cost_estimate: Number(matterForm.cost_estimate || 0),
@@ -829,6 +1152,7 @@ export default function TumulLegalV3() {
         court_date: matter.court_date,
         cost_estimate: matter.cost_estimate,
         priority: matter.priority,
+        summary: matter.summary,
       }))
     );
 
@@ -1099,7 +1423,7 @@ export default function TumulLegalV3() {
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-950 text-white">
-        Loading Tumul Legal V3...
+        Loading Tumul Legal V4...
       </div>
     );
   }
@@ -1266,9 +1590,15 @@ export default function TumulLegalV3() {
                 <span className="text-sm font-bold text-white">{openMatters}</span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-sm text-slate-300">Urgent Matters</span>
-                <span className="text-sm font-bold text-white">
-                  {urgentMatters}
+                <span className="text-sm text-slate-300">Urgent Deadlines</span>
+                <span className="text-sm font-bold text-orange-300">
+                  {urgentDeadlines}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-slate-300">Overdue Deadlines</span>
+                <span className="text-sm font-bold text-rose-300">
+                  {overdueDeadlines}
                 </span>
               </div>
               <div className="flex items-center justify-between">
@@ -1368,9 +1698,9 @@ export default function TumulLegalV3() {
                   subtext="Unpaid and part paid invoices"
                 />
                 <StatCard
-                  label="Collected Value"
-                  value={permissions.seeFinancials ? currency(collectedValue) : "Restricted"}
-                  subtext="Invoices marked as paid"
+                  label="Overdue Deadlines"
+                  value={overdueDeadlines}
+                  subtext="Deadlines that already passed"
                 />
               </section>
 
@@ -1446,25 +1776,77 @@ export default function TumulLegalV3() {
                   </div>
                 </div>
 
-                <div className={`${glassCard} p-5`}>
-                  <div className="mb-4">
-                    <h3 className={sectionTitle}>Matter Status Summary</h3>
-                    <p className={muted}>Live data from database</p>
-                  </div>
-                  <div className="space-y-3">
-                    {matterStatusSummary.map((item) => (
-                      <div
-                        key={item.status}
-                        className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-3"
-                      >
-                        <span className="text-sm text-slate-200">
-                          {item.status}
-                        </span>
-                        <span className="text-base font-bold text-white">
-                          {item.count}
-                        </span>
+                <div className="space-y-6">
+                  <div className={`${glassCard} p-5`}>
+                    <div className="mb-4 flex items-start justify-between gap-3">
+                      <div>
+                        <h3 className={sectionTitle}>Upcoming Deadlines</h3>
+                        <p className={muted}>The dates a lawyer cannot afford to miss</p>
                       </div>
-                    ))}
+                      <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-right">
+                        <p className="text-xs uppercase tracking-wide text-slate-400">Live Count</p>
+                        <p className="mt-1 text-lg font-bold text-white">{upcomingDeadlineItems.length}</p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      {upcomingDeadlineItems.length === 0 && (
+                        <div className="rounded-2xl border border-dashed border-white/10 px-4 py-6 text-sm text-slate-400">
+                          No upcoming deadlines yet. Add deadlines inside a matter file.
+                        </div>
+                      )}
+
+                      {upcomingDeadlineItems.map((deadline) => (
+                        <button
+                          key={deadline.id}
+                          onClick={() => {
+                            const linkedMatter = matters.find((item) => item.id === deadline.matter_id);
+                            setActiveTab("docket");
+                            if (linkedMatter) void openMatterFile(linkedMatter);
+                          }}
+                          className="w-full rounded-2xl border border-white/10 bg-white/5 p-4 text-left transition hover:bg-white/10"
+                        >
+                          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                            <div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="text-sm font-semibold text-cyan-200">{deadline.matter_no}</p>
+                                <span className={`inline-flex rounded-full px-3 py-1 text-[11px] font-semibold ${getDeadlineBadgeClass(deadline.state)}`}>
+                                  {deadline.state}
+                                </span>
+                              </div>
+                              <p className="mt-2 text-base font-semibold text-white">{deadline.title}</p>
+                              <p className="mt-1 text-sm text-slate-400">{deadline.client_name}</p>
+                            </div>
+                            <div className="text-sm text-slate-300 lg:text-right">
+                              <p className="font-semibold text-white">{normalizeDateOnly(deadline.deadline_date)}</p>
+                              <p className="mt-1 text-xs text-slate-400">Click to open matter file</p>
+                            </div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className={`${glassCard} p-5`}>
+                    <div className="mb-4">
+                      <h3 className={sectionTitle}>Matter Status Summary</h3>
+                      <p className={muted}>Live data from database</p>
+                    </div>
+                    <div className="space-y-3">
+                      {matterStatusSummary.map((item) => (
+                        <div
+                          key={item.status}
+                          className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-3"
+                        >
+                          <span className="text-sm text-slate-200">
+                            {item.status}
+                          </span>
+                          <span className="text-base font-bold text-white">
+                            {item.count}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
               </section>
@@ -1472,7 +1854,7 @@ export default function TumulLegalV3() {
           )}
 
           {activeTab === "docket" && permissions.docket && (
-            <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+            <div className="grid grid-cols-1 gap-6 xl:grid-cols-[380px_minmax(0,1fr)]">
               <div className={`${glassCard} p-5 no-print`}>
                 <div className="mb-4">
                   <h3 className={sectionTitle}>Add New Matter</h3>
@@ -1547,17 +1929,17 @@ export default function TumulLegalV3() {
                     disabled={!permissions.addMatter}
                   />
                   <textarea
-  value={matterForm.summary}
-  onChange={(e) =>
-    setMatterForm({
-      ...matterForm,
-      summary: e.target.value,
-    })
-  }
-  placeholder="Case Summary"
-  className={`${inputClass} min-h-[120px] resize-y`}
-  disabled={!permissions.addMatter}
-/>
+                    value={matterForm.summary}
+                    onChange={(e) =>
+                      setMatterForm({
+                        ...matterForm,
+                        summary: e.target.value,
+                      })
+                    }
+                    placeholder="Case Summary"
+                    className={`${inputClass} min-h-[120px] resize-y`}
+                    disabled={!permissions.addMatter}
+                  />
                   <input
                     value={matterForm.assigned_lawyer}
                     onChange={(e) =>
@@ -1620,112 +2002,468 @@ export default function TumulLegalV3() {
                 </div>
               </div>
 
-              <div className={`${glassCard} p-5 xl:col-span-2`}>
-                <div className="no-print mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                  <div>
-                    <h3 className={sectionTitle}>Digital Case Docket</h3>
-                    <p className={muted}>Search legal matters</p>
-                  </div>
-                  <div className="flex flex-col gap-3 lg:flex-row">
-                    <input
-                      value={matterSearch}
-                      onChange={(e) => setMatterSearch(e.target.value)}
-                      placeholder="Search matter, client, lawyer, case type..."
-                      className={`${inputClass} lg:min-w-[300px]`}
-                    />
-                    <button
-                      onClick={() => handlePrint("Case Docket")}
-                      className={secondaryButton}
-                    >
-                      Print
-                    </button>
-                    <button
-                      onClick={() => handleExportPdf("Case Docket")}
-                      className={secondaryButton}
-                    >
-                      Export PDF
-                    </button>
-                    {permissions.exportData && (
+              <div className="space-y-6">
+                <div className={`${glassCard} p-5`}>
+                  <div className="no-print mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <h3 className={sectionTitle}>Digital Case Docket</h3>
+                      <p className={muted}>Click a matter number to open the full case file.</p>
+                    </div>
+                    <div className="flex flex-col gap-3 lg:flex-row">
+                      <input
+                        value={matterSearch}
+                        onChange={(e) => setMatterSearch(e.target.value)}
+                        placeholder="Search matter, client, lawyer, case type..."
+                        className={`${inputClass} lg:min-w-[300px]`}
+                      />
                       <button
-                        onClick={handleExportMatters}
-                        className={primaryButton}
+                        onClick={() => handlePrint("Case Docket")}
+                        className={secondaryButton}
                       >
-                        Export
+                        Print
                       </button>
-                    )}
+                      <button
+                        onClick={() => handleExportPdf("Case Docket")}
+                        className={secondaryButton}
+                      >
+                        Export PDF
+                      </button>
+                      {permissions.exportData && (
+                        <button
+                          onClick={handleExportMatters}
+                          className={primaryButton}
+                        >
+                          Export
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-white/10 text-left text-slate-400">
+                          <th className="px-3 py-3">Matter File</th>
+                          <th className="px-3 py-3">Client</th>
+                          <th className="px-3 py-3">Case Type</th>
+                          <th className="px-3 py-3">Lawyer</th>
+                          <th className="px-3 py-3">Status</th>
+                          <th className="px-3 py-3">Priority</th>
+                          <th className="px-3 py-3">Court Date</th>
+                          <th className="px-3 py-3">Cost</th>
+                          <th className="px-3 py-3">Summary</th>
+                          <th className="px-3 py-3 no-print">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredMatters.map((matter) => (
+                          <tr
+                            key={matter.id}
+                            className="border-b border-white/5 text-slate-200 hover:bg-white/[0.03]"
+                          >
+                            <td className="px-3 py-4">
+                              <button
+                                onClick={() => openMatterFile(matter)}
+                                className="text-left"
+                              >
+                                <div className="font-semibold text-cyan-300 hover:text-cyan-200">
+                                  {matter.matter_no}
+                                </div>
+                                <div className="mt-1 text-xs text-slate-400">
+                                  {matter.next_step || "No next step yet"}
+                                </div>
+                              </button>
+                            </td>
+                            <td className="px-3 py-4">{matter.client_name}</td>
+                            <td className="px-3 py-4">{matter.case_type}</td>
+                            <td className="px-3 py-4">
+                              {matter.assigned_lawyer}
+                            </td>
+                            <td className="px-3 py-4">
+                              <span
+                                className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getStatusClass(
+                                  matter.status
+                                )}`}
+                              >
+                                {matter.status}
+                              </span>
+                            </td>
+                            <td className="px-3 py-4">
+                              <span
+                                className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getPriorityClass(
+                                  matter.priority
+                                )}`}
+                              >
+                                {matter.priority}
+                              </span>
+                            </td>
+                            <td className="px-3 py-4">
+                              {matter.court_date || "Not set"}
+                            </td>
+                            <td className="px-3 py-4 font-semibold text-white">
+                              {currency(Number(matter.cost_estimate || 0))}
+                            </td>
+                            <td className="px-3 py-4 text-slate-300">
+                              <button
+                                onClick={() => openMatterFile(matter)}
+                                className="max-w-[230px] text-left text-sm text-slate-300 hover:text-white"
+                              >
+                                {matter.summary
+                                  ? `${matter.summary.slice(0, 60)}${matter.summary.length > 60 ? "..." : ""}`
+                                  : "Open file to add summary"}
+                              </button>
+                            </td>
+                            <td className="px-3 py-4 no-print">
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={() => openMatterFile(matter)}
+                                  className="rounded-2xl px-4 py-2 text-xs font-semibold transition border border-cyan-400/30 bg-cyan-400/10 text-cyan-200 hover:bg-cyan-400/20"
+                                >
+                                  Open
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteMatter(matter)}
+                                  className="rounded-2xl px-4 py-2 text-xs font-semibold transition border border-rose-400/30 bg-rose-400/10 text-rose-200 hover:bg-rose-400/20"
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                        {!filteredMatters.length && (
+                          <tr>
+                            <td
+                              colSpan={10}
+                              className="px-3 py-10 text-center text-slate-400"
+                            >
+                              No matters found.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
 
-                <div className="overflow-x-auto">
-                  <table className="min-w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-white/10 text-left text-slate-400">
-                        <th className="px-3 py-3">Matter</th>
-                        <th className="px-3 py-3">Client</th>
-                        <th className="px-3 py-3">Case Type</th>
-                        <th className="px-3 py-3">Lawyer</th>
-                        <th className="px-3 py-3">Status</th>
-                        <th className="px-3 py-3">Priority</th>
-                        <th className="px-3 py-3">Court Date</th>
-                        <th className="px-3 py-3">Cost</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredMatters.map((matter) => (
-                        <tr
-                          key={matter.id}
-                          className="border-b border-white/5 text-slate-200"
+                {isMatterPanelOpen && selectedMatter && (
+                  <div className={`${glassCard} p-5`}>
+                    <div className="mb-5 flex flex-col gap-3 border-b border-white/10 pb-5 lg:flex-row lg:items-start lg:justify-between">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-300/80">
+                          Case File
+                        </p>
+                        <h3 className="mt-2 text-2xl font-bold text-white">
+                          {selectedMatter.matter_no}
+                        </h3>
+                        <p className="mt-2 text-sm text-slate-400">
+                          Full matter details, summary and next legal action.
+                        </p>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        <span
+                          className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getStatusClass(
+                            selectedMatter.status
+                          )}`}
                         >
-                          <td className="px-3 py-4">
-                            <div className="font-semibold text-white">
-                              {matter.matter_no}
+                          {selectedMatter.status}
+                        </span>
+                        <span
+                          className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getPriorityClass(
+                            selectedMatter.priority
+                          )}`}
+                        >
+                          {selectedMatter.priority}
+                        </span>
+                        <button
+                          onClick={closeMatterFile}
+                          className={secondaryButton}
+                        >
+                          Close
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+                      <div>
+                        <label className="mb-2 block text-sm text-slate-300">
+                          Matter Number
+                        </label>
+                        <input
+                          value={selectedMatter.matter_no}
+                          onChange={(e) =>
+                            updateSelectedMatterField("matter_no", e.target.value)
+                          }
+                          className={inputClass}
+                          disabled={!canEditMatterDetails}
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-2 block text-sm text-slate-300">
+                          Client Name
+                        </label>
+                        <input
+                          value={selectedMatter.client_name}
+                          onChange={(e) =>
+                            updateSelectedMatterField("client_name", e.target.value)
+                          }
+                          className={inputClass}
+                          disabled={!canEditMatterDetails}
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-2 block text-sm text-slate-300">
+                          Case Type
+                        </label>
+                        <input
+                          value={selectedMatter.case_type}
+                          onChange={(e) =>
+                            updateSelectedMatterField("case_type", e.target.value)
+                          }
+                          className={inputClass}
+                          disabled={!canEditMatterDetails}
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-2 block text-sm text-slate-300">
+                          Assigned Lawyer
+                        </label>
+                        <input
+                          value={selectedMatter.assigned_lawyer}
+                          onChange={(e) =>
+                            updateSelectedMatterField("assigned_lawyer", e.target.value)
+                          }
+                          className={inputClass}
+                          disabled={!canEditMatterDetails}
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-2 block text-sm text-slate-300">
+                          Status
+                        </label>
+                        <select
+                          value={selectedMatter.status}
+                          onChange={(e) =>
+                            updateSelectedMatterField("status", e.target.value as MatterStatus)
+                          }
+                          className={inputClass}
+                          disabled={!canEditMatterDetails}
+                        >
+                          <option className="bg-slate-900">Open</option>
+                          <option className="bg-slate-900">In Progress</option>
+                          <option className="bg-slate-900">Pending Filing</option>
+                          <option className="bg-slate-900">In Court</option>
+                          <option className="bg-slate-900">Awaiting Client</option>
+                          <option className="bg-slate-900">Closed</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="mb-2 block text-sm text-slate-300">
+                          Priority
+                        </label>
+                        <select
+                          value={selectedMatter.priority}
+                          onChange={(e) =>
+                            updateSelectedMatterField("priority", e.target.value as Priority)
+                          }
+                          className={inputClass}
+                          disabled={!canEditMatterDetails}
+                        >
+                          <option className="bg-slate-900">High</option>
+                          <option className="bg-slate-900">Medium</option>
+                          <option className="bg-slate-900">Low</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="mb-2 block text-sm text-slate-300">
+                          Court Date
+                        </label>
+                        <input
+                          type="date"
+                          value={selectedMatter.court_date || ""}
+                          onChange={(e) =>
+                            updateSelectedMatterField("court_date", e.target.value)
+                          }
+                          className={inputClass}
+                          disabled={!canEditMatterDetails}
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-2 block text-sm text-slate-300">
+                          Estimated Cost
+                        </label>
+                        <input
+                          type="number"
+                          value={selectedMatter.cost_estimate || 0}
+                          onChange={(e) =>
+                            updateSelectedMatterField(
+                              "cost_estimate",
+                              Number(e.target.value || 0)
+                            )
+                          }
+                          className={inputClass}
+                          disabled={!canEditMatterDetails}
+                        />
+                      </div>
+                      <div className="xl:col-span-2">
+                        <label className="mb-2 block text-sm text-slate-300">
+                          Next Legal Step
+                        </label>
+                        <input
+                          value={selectedMatter.next_step || ""}
+                          onChange={(e) =>
+                            updateSelectedMatterField("next_step", e.target.value)
+                          }
+                          className={inputClass}
+                          disabled={!canEditMatterDetails}
+                        />
+                      </div>
+                      <div className="xl:col-span-2">
+                        <label className="mb-2 block text-sm text-slate-300">
+                          Case Summary
+                        </label>
+                        <textarea
+                          value={selectedMatter.summary || ""}
+                          onChange={(e) =>
+                            updateSelectedMatterField("summary", e.target.value)
+                          }
+                          className={`${inputClass} min-h-[180px] resize-y`}
+                          disabled={!canEditMatterDetails}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="mt-6 rounded-3xl border border-white/10 bg-white/5 p-5">
+                      <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <h4 className="text-lg font-semibold text-white">
+                            Matter Deadlines
+                          </h4>
+                          <p className="text-sm text-slate-400">
+                            Track filings, hearings, submissions and urgent follow-up dates.
+                          </p>
+                        </div>
+                        <div className="text-sm text-slate-400">
+                          Total: {matterDeadlines.length}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1.2fr_180px_1fr_auto]">
+                        <input
+                          value={deadlineForm.title}
+                          onChange={(e) =>
+                            setDeadlineForm({ ...deadlineForm, title: e.target.value })
+                          }
+                          placeholder="Deadline title"
+                          className={inputClass}
+                          disabled={!canEditMatterDetails}
+                        />
+                        <input
+                          type="date"
+                          value={deadlineForm.deadline_date}
+                          onChange={(e) =>
+                            setDeadlineForm({
+                              ...deadlineForm,
+                              deadline_date: e.target.value,
+                            })
+                          }
+                          className={inputClass}
+                          disabled={!canEditMatterDetails}
+                        />
+                        <input
+                          value={deadlineForm.notes}
+                          onChange={(e) =>
+                            setDeadlineForm({ ...deadlineForm, notes: e.target.value })
+                          }
+                          placeholder="Notes (optional)"
+                          className={inputClass}
+                          disabled={!canEditMatterDetails}
+                        />
+                        <button
+                          onClick={handleAddDeadline}
+                          disabled={!canEditMatterDetails || isSavingDeadline}
+                          className={canEditMatterDetails ? primaryButton : secondaryButton}
+                        >
+                          {isSavingDeadline ? "Saving..." : "Add Deadline"}
+                        </button>
+                      </div>
+
+                      <div className="mt-5 space-y-3">
+                        {matterDeadlines.length === 0 && (
+                          <div className="rounded-2xl border border-dashed border-white/10 px-4 py-6 text-sm text-slate-400">
+                            No deadlines added for this matter yet.
+                          </div>
+                        )}
+
+                        {matterDeadlines.map((deadline) => {
+                          const deadlineState = getDeadlineState(deadline);
+
+                          return (
+                            <div
+                              key={deadline.id}
+                              className="rounded-2xl border border-white/10 bg-slate-950/40 p-4"
+                            >
+                              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                                <div>
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <p className="text-base font-semibold text-white">
+                                      {deadline.title}
+                                    </p>
+                                    <span
+                                      className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getDeadlineBadgeClass(
+                                        deadlineState
+                                      )}`}
+                                    >
+                                      {deadlineState}
+                                    </span>
+                                  </div>
+                                  <p className="mt-2 text-sm text-slate-300">
+                                    Due: {normalizeDateOnly(deadline.deadline_date)}
+                                  </p>
+                                  <p className="mt-1 text-sm text-slate-400">
+                                    {deadline.notes || "No notes"}
+                                  </p>
+                                </div>
+
+                                <div className="flex flex-wrap gap-2">
+                                  <button
+                                    onClick={() => handleToggleDeadlineComplete(deadline)}
+                                    className="rounded-2xl px-4 py-2 text-xs font-semibold transition border border-emerald-400/30 bg-emerald-400/10 text-emerald-200 hover:bg-emerald-400/20"
+                                  >
+                                    {deadline.is_completed ? "Mark Open" : "Mark Complete"}
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeleteDeadline(deadline)}
+                                    className="rounded-2xl px-4 py-2 text-xs font-semibold transition border border-rose-400/30 bg-rose-400/10 text-rose-200 hover:bg-rose-400/20"
+                                  >
+                                    Delete
+                                  </button>
+                                </div>
+                              </div>
                             </div>
-                            <div className="mt-1 text-xs text-slate-400">
-                              {matter.next_step || "No next step yet"}
-                            </div>
-                          </td>
-                          <td className="px-3 py-4">{matter.client_name}</td>
-                          <td className="px-3 py-4">{matter.case_type}</td>
-                          <td className="px-3 py-4">
-                            {matter.assigned_lawyer}
-                          </td>
-                          <td className="px-3 py-4">
-                            <span
-                              className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getStatusClass(
-                                matter.status
-                              )}`}
-                            >
-                              {matter.status}
-                            </span>
-                          </td>
-                          <td className="px-3 py-4">
-                            <span
-                              className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getPriorityClass(
-                                matter.priority
-                              )}`}
-                            >
-                              {matter.priority}
-                            </span>
-                          </td>
-                          <td className="px-3 py-4">
-                            {matter.court_date || "Not set"}
-                          </td>
-                          <td className="px-3 py-4 font-semibold text-white">
-                            {currency(Number(matter.cost_estimate || 0))}
-                          </td>
-                          <td className="px-3 py-4 no-print">
-                            <button
-                              onClick={() => handleDeleteMatter(matter)}
-                              className="rounded-2xl px-4 py-2 text-xs font-semibold transition border border-rose-400/30 bg-rose-400/10 text-rose-200 hover:bg-rose-400/20"
-                            >
-                              Delete
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="mt-5 flex flex-col gap-3 border-t border-white/10 pt-5 sm:flex-row sm:justify-end">
+                      <button
+                        onClick={closeMatterFile}
+                        className={secondaryButton}
+                      >
+                        Close File
+                      </button>
+                      <button
+                        onClick={handleSaveMatterDetails}
+                        disabled={!canEditMatterDetails || isSavingMatter}
+                        className={canEditMatterDetails ? primaryButton : secondaryButton}
+                      >
+                        {isSavingMatter ? "Saving..." : "Save Changes"}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
