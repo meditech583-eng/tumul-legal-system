@@ -63,6 +63,8 @@ type Invoice = {
   client_name: string;
   matter_no: string;
   amount: number;
+  amount_paid?: number;
+  service_description?: string;
   status: InvoiceStatus;
   due_date: string;
   issued_date: string;
@@ -291,6 +293,8 @@ export default function TumulLegalV4() {
     client_name: "",
     matter_no: "",
     amount: "",
+    amount_paid: "",
+    service_description: "Legal service / professional fee",
     status: "Unpaid" as InvoiceStatus,
     due_date: "",
     issued_date: "",
@@ -636,6 +640,17 @@ export default function TumulLegalV4() {
     );
   }, [invoices, invoiceSearch]);
 
+  const getCalculatedInvoiceStatus = (amount: number, amountPaid: number): InvoiceStatus => {
+    const invoiceAmount = Number(amount || 0);
+    const paidAmount = Number(amountPaid || 0);
+    if (invoiceAmount > 0 && paidAmount >= invoiceAmount) return "Paid";
+    if (paidAmount > 0 && paidAmount < invoiceAmount) return "Part Paid";
+    return "Unpaid";
+  };
+
+  const getInvoiceBalance = (invoice: Invoice) =>
+    Math.max(Number(invoice.amount || 0) - Number(invoice.amount_paid || 0), 0);
+
   const totalMatters = matters.length;
   const openMatters = matters.filter((m) => m.status !== "Closed").length;
   const totalClients = clients.length;
@@ -643,12 +658,14 @@ export default function TumulLegalV4() {
     (sum, invoice) => sum + Number(invoice.amount || 0),
     0
   );
-  const outstandingValue = invoices
-    .filter((invoice) => invoice.status !== "Paid")
-    .reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0);
-  const collectedValue = invoices
-    .filter((invoice) => invoice.status === "Paid")
-    .reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0);
+  const outstandingValue = invoices.reduce(
+    (sum, invoice) => sum + getInvoiceBalance(invoice),
+    0
+  );
+  const collectedValue = invoices.reduce(
+    (sum, invoice) => sum + Number(invoice.amount_paid || 0),
+    0
+  );
   const urgentMatters = matters.filter((m) => m.priority === "High").length;
   const upcomingCourtDates = matters.filter(
     (m) => m.court_date && m.status !== "Closed"
@@ -1010,12 +1027,19 @@ export default function TumulLegalV4() {
       return;
     }
 
+    const invoiceAmount = Number(invoiceForm.amount || 0);
+    const paidAmount = Number(invoiceForm.amount_paid || 0);
+    const calculatedStatus = getCalculatedInvoiceStatus(invoiceAmount, paidAmount);
+
     const { error } = await supabase.from("invoices").insert({
       invoice_no: invoiceForm.invoice_no,
       client_name: invoiceForm.client_name,
       matter_no: invoiceForm.matter_no,
-      amount: Number(invoiceForm.amount),
-      status: invoiceForm.status,
+      amount: invoiceAmount,
+      amount_paid: paidAmount,
+      service_description:
+        invoiceForm.service_description || "Legal service / professional fee",
+      status: calculatedStatus,
       due_date: invoiceForm.due_date || null,
       issued_date:
         invoiceForm.issued_date || new Date().toISOString().slice(0, 10),
@@ -1033,6 +1057,8 @@ export default function TumulLegalV4() {
       client_name: "",
       matter_no: "",
       amount: "",
+      amount_paid: "",
+      service_description: "Legal service / professional fee",
       status: "Unpaid",
       due_date: "",
       issued_date: "",
@@ -1251,6 +1277,166 @@ export default function TumulLegalV4() {
 
     await wait(250);
     window.print();
+  };
+
+  const handlePrintInvoice = (invoice: Invoice) => {
+    if (!permissions.printData) {
+      alert("You do not have permission to print invoices.");
+      return;
+    }
+
+    const invoiceDate = invoice.issued_date || new Date().toISOString().slice(0, 10);
+    const dueDate = invoice.due_date || "Not set";
+    const amount = Number(invoice.amount || 0);
+    const amountPaid = Number(invoice.amount_paid || 0);
+    const balance = Math.max(amount - amountPaid, 0);
+    const calculatedStatus = getCalculatedInvoiceStatus(amount, amountPaid);
+    const description =
+      invoice.service_description || "Legal service / professional fee";
+
+    const invoiceHtml = `
+      <!doctype html>
+      <html>
+        <head>
+          <title>Tumul Legal Invoice - ${invoice.invoice_no}</title>
+          <meta charset="utf-8" />
+          <style>
+            @page { size: A4; margin: 12mm; }
+            * { box-sizing: border-box; }
+            body { margin: 0; background: #e5e7eb; color: #111827; font-family: Arial, Helvetica, sans-serif; }
+            .toolbar { max-width: 900px; margin: 18px auto; display: flex; justify-content: flex-end; gap: 10px; }
+            .toolbar button { border: 0; border-radius: 10px; padding: 12px 18px; font-weight: 700; cursor: pointer; }
+            .print-btn { background: #0ea5e9; color: #ffffff; }
+            .close-btn { background: #ffffff; color: #111827; border: 1px solid #d1d5db !important; }
+            .invoice-page { width: 900px; max-width: 100%; margin: 0 auto 30px; background: #ffffff; padding: 46px; box-shadow: 0 18px 45px rgba(15, 23, 42, 0.18); }
+            .header { display: flex; justify-content: space-between; gap: 28px; border-bottom: 2px solid #e5e7eb; padding-bottom: 28px; }
+            .logo { width: 240px; max-height: 120px; object-fit: contain; object-position: left center; }
+            .firm-name { margin: 14px 0 4px; font-size: 28px; letter-spacing: 1px; font-weight: 800; }
+            .tagline { margin: 0; color: #b8860b; font-weight: 700; }
+            .address { text-align: right; font-size: 13px; line-height: 1.55; color: #334155; }
+            .address strong { color: #111827; }
+            .title-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; margin-top: 36px; }
+            h1 { margin: 0; font-size: 46px; letter-spacing: 2px; }
+            .subtitle { margin-top: 8px; color: #64748b; }
+            .invoice-box { border: 1px solid #d1d5db; border-radius: 14px; padding: 18px; min-width: 270px; font-size: 14px; line-height: 1.8; }
+            .status { font-weight: 800; color: ${calculatedStatus === "Paid" ? "#047857" : calculatedStatus === "Part Paid" ? "#0369a1" : "#b45309"}; }
+            .details-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 34px; }
+            .detail-card { border: 1px solid #d1d5db; border-radius: 14px; padding: 18px; }
+            .label { margin: 0 0 8px; font-size: 11px; letter-spacing: 1.8px; text-transform: uppercase; color: #64748b; font-weight: 800; }
+            .value { margin: 0; font-size: 18px; font-weight: 800; }
+            table { width: 100%; border-collapse: collapse; margin-top: 34px; }
+            th { background: #0f172a; color: #ffffff; padding: 16px; text-align: left; font-size: 14px; }
+            td { border: 1px solid #d1d5db; padding: 16px; font-size: 14px; }
+            .right { text-align: right; }
+            .totals { display: flex; justify-content: flex-end; margin-top: 34px; }
+            .total-box { width: 340px; border: 1px solid #d1d5db; border-radius: 14px; padding: 18px; }
+            .total-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #e5e7eb; }
+            .total-row:last-child { border-bottom: 0; padding-top: 16px; font-size: 22px; font-weight: 900; }
+            .notes { margin-top: 48px; border-top: 1px solid #e5e7eb; padding-top: 22px; color: #475569; font-size: 14px; line-height: 1.6; }
+            @media print { body { background: #ffffff; } .toolbar { display: none; } .invoice-page { width: 100%; margin: 0; padding: 0; box-shadow: none; } }
+          </style>
+        </head>
+        <body>
+          <div class="toolbar">
+            <button class="close-btn" onclick="window.close()">Close</button>
+            <button class="print-btn" onclick="window.print()">Print / Save PDF</button>
+          </div>
+          <section class="invoice-page">
+            <div class="header">
+              <div>
+                <img class="logo" src="/tumul-logo.png" alt="Tumul Legal Logo" />
+                <div class="firm-name">TUMUL LEGAL</div>
+                <p class="tagline">Excellence, Experience, Integrity</p>
+              </div>
+              <div class="address">
+                <strong>P.O. Box 5856</strong><br/>
+                Boroko<br/>
+                National Capital District<br/>
+                Papua New Guinea<br/><br/>
+                <strong>Physical Address</strong><br/>
+                Level 2, Suite 3, Waigani Haus<br/>
+                Section 31, Allotment 5<br/>
+                Mokoraha Road, Waigani, NCD<br/><br/>
+                Phone: +675 78993998<br/>
+                Email: mek@tumullegal.com
+              </div>
+            </div>
+            <div class="title-row">
+              <div><h1>INVOICE</h1><div class="subtitle">Professional legal services</div></div>
+              <div class="invoice-box">
+                <div><strong>Invoice No:</strong> ${invoice.invoice_no || "N/A"}</div>
+                <div><strong>Invoice Date:</strong> ${invoiceDate}</div>
+                <div><strong>Due Date:</strong> ${dueDate}</div>
+                <div><strong>Status:</strong> <span class="status">${calculatedStatus}</span></div>
+              </div>
+            </div>
+            <div class="details-grid">
+              <div class="detail-card"><p class="label">Bill To</p><p class="value">${invoice.client_name || "Client Name"}</p></div>
+              <div class="detail-card"><p class="label">Matter</p><p class="value">${invoice.matter_no || "Matter Number"}</p></div>
+            </div>
+            <table>
+              <thead><tr><th>Description</th><th class="right">Amount</th></tr></thead>
+              <tbody><tr><td>${description}</td><td class="right"><strong>${currency(amount)}</strong></td></tr></tbody>
+            </table>
+            <div class="totals"><div class="total-box">
+              <div class="total-row"><span>Subtotal</span><strong>${currency(amount)}</strong></div>
+              <div class="total-row"><span>Amount Paid</span><strong>${currency(amountPaid)}</strong></div>
+              <div class="total-row"><span>Balance</span><span>${currency(balance)}</span></div>
+            </div></div>
+            <div class="notes"><strong>Notes</strong><br/>Thank you for choosing Tumul Legal. This invoice was generated from the Tumul Legal Management System.</div>
+          </section>
+        </body>
+      </html>
+    `;
+
+    const printWindow = window.open("", "_blank", "width=950,height=1100");
+    if (!printWindow) {
+      alert("Popup blocked. Please allow popups and try again.");
+      return;
+    }
+
+    printWindow.document.open();
+    printWindow.document.write(invoiceHtml);
+    printWindow.document.close();
+    printWindow.focus();
+    logActivity(`Opened invoice ${invoice.invoice_no} for printing`, "Billing");
+  };
+
+  const handleUpdateInvoicePayment = async (invoice: Invoice) => {
+    if (!permissions.addInvoice) {
+      alert("You do not have permission to update invoice payments.");
+      return;
+    }
+    const invoiceAmount = Number(invoice.amount || 0);
+    const currentPaid = Number(invoice.amount_paid || 0);
+    const enteredAmount = window.prompt(
+      `Enter total amount paid for ${invoice.invoice_no}.\nInvoice total: ${currency(invoiceAmount)}\nCurrent paid: ${currency(currentPaid)}`,
+      String(currentPaid)
+    );
+    if (enteredAmount === null) return;
+    const paidAmount = Number(enteredAmount);
+    if (Number.isNaN(paidAmount) || paidAmount < 0) {
+      alert("Please enter a valid payment amount.");
+      return;
+    }
+    if (paidAmount > invoiceAmount) {
+      alert("Amount paid cannot be greater than the invoice amount.");
+      return;
+    }
+    const updatedStatus = getCalculatedInvoiceStatus(invoiceAmount, paidAmount);
+    const { error } = await supabase
+      .from("invoices")
+      .update({ amount_paid: paidAmount, status: updatedStatus })
+      .eq("id", invoice.id);
+    if (error) {
+      alert(error.message);
+      return;
+    }
+    logActivity(
+      `Updated payment for ${invoice.invoice_no}: ${currency(paidAmount)} paid, status ${updatedStatus}`,
+      "Billing"
+    );
+    await loadAllData();
   };
 
   const handleDeleteMatter = async (matter: Matter) => {
@@ -2691,6 +2877,31 @@ export default function TumulLegalV4() {
                     className={inputClass}
                     disabled={!permissions.addInvoice}
                   />
+                  <input
+                    type="number"
+                    value={invoiceForm.amount_paid}
+                    onChange={(e) =>
+                      setInvoiceForm({
+                        ...invoiceForm,
+                        amount_paid: e.target.value,
+                      })
+                    }
+                    placeholder="Amount Paid (optional)"
+                    className={inputClass}
+                    disabled={!permissions.addInvoice}
+                  />
+                  <textarea
+                    value={invoiceForm.service_description}
+                    onChange={(e) =>
+                      setInvoiceForm({
+                        ...invoiceForm,
+                        service_description: e.target.value,
+                      })
+                    }
+                    placeholder="Service Description"
+                    className={inputClass}
+                    disabled={!permissions.addInvoice}
+                  />
                   <select
                     value={invoiceForm.status}
                     onChange={(e) =>
@@ -2810,7 +3021,10 @@ export default function TumulLegalV4() {
                         <th className="px-3 py-3">Issued</th>
                         <th className="px-3 py-3">Due</th>
                         <th className="px-3 py-3">Amount</th>
+                        <th className="px-3 py-3">Paid</th>
+                        <th className="px-3 py-3">Balance</th>
                         <th className="px-3 py-3">Status</th>
+                        <th className="px-3 py-3 no-print">Action</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2833,14 +3047,42 @@ export default function TumulLegalV4() {
                           <td className="px-3 py-4 font-semibold text-white">
                             {currency(Number(invoice.amount || 0))}
                           </td>
+                          <td className="px-3 py-4 font-semibold text-emerald-300">
+                            {currency(Number(invoice.amount_paid || 0))}
+                          </td>
+                          <td className="px-3 py-4 font-semibold text-cyan-300">
+                            {currency(getInvoiceBalance(invoice))}
+                          </td>
                           <td className="px-3 py-4">
                             <span
                               className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getStatusClass(
-                                invoice.status
+                                getCalculatedInvoiceStatus(
+                                  Number(invoice.amount || 0),
+                                  Number(invoice.amount_paid || 0)
+                                )
                               )}`}
                             >
-                              {invoice.status}
+                              {getCalculatedInvoiceStatus(
+                                Number(invoice.amount || 0),
+                                Number(invoice.amount_paid || 0)
+                              )}
                             </span>
+                          </td>
+                          <td className="px-3 py-4 no-print">
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                onClick={() => handleUpdateInvoicePayment(invoice)}
+                                className="rounded-2xl border border-emerald-400/30 bg-emerald-400/10 px-4 py-2 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-400/20"
+                              >
+                                Update Payment
+                              </button>
+                              <button
+                                onClick={() => handlePrintInvoice(invoice)}
+                                className="rounded-2xl border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-400/20"
+                              >
+                                Print / Save PDF
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))}
