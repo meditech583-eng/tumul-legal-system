@@ -1253,6 +1253,29 @@ export default function TumulLegalV4() {
     logActivity("Exported activity log to CSV", "Activity");
   };
 
+  const getOfficialDocumentMeta = (tab: Tab) => {
+    switch (tab) {
+      case "dashboard":
+        return { classification: "Internal Management Document", title: "OPERATIONS DASHBOARD" };
+      case "docket":
+        return { classification: "Confidential Legal Records", title: "CASE DOCKET REGISTER" };
+      case "clients":
+        return { classification: "Confidential Client Records", title: "CLIENT REGISTER" };
+      case "billing":
+        return { classification: "Financial Document", title: "BILLING REGISTER" };
+      case "reports":
+        return { classification: "Internal Management Report", title: "LEGAL OPERATIONS REPORT" };
+      case "users":
+        return { classification: "Restricted Internal Document", title: "USER & ROLE REGISTER" };
+      case "activity":
+        return { classification: "Restricted Audit Record", title: "ACTIVITY LOG" };
+      default:
+        return { classification: "Official Tumul Legal Document", title: "TUMUL LEGAL RECORD" };
+    }
+  };
+
+  const officialPrintMeta = getOfficialDocumentMeta(printSection || activeTab);
+
   const handlePrint = async (sectionName: string) => {
     if (!permissions.printData) {
       alert("You do not have permission to print.");
@@ -1264,7 +1287,7 @@ export default function TumulLegalV4() {
     document.body.classList.add("printing-active");
     logActivity(`Printed ${sectionName}`, sectionName);
 
-    await wait(250);
+    await wait(400);
     window.print();
   };
 
@@ -1279,7 +1302,7 @@ export default function TumulLegalV4() {
     document.body.classList.add("printing-active");
     logActivity(`Exported ${sectionName} to PDF`, sectionName);
 
-    await wait(250);
+    await wait(400);
     window.print();
   };
 
@@ -1518,111 +1541,144 @@ export default function TumulLegalV4() {
       return;
     }
 
+    const escapeHtml = (value: unknown) =>
+      String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+
     const invoiceDate = invoice.issued_date || new Date().toISOString().slice(0, 10);
     const dueDate = invoice.due_date || "Not set";
     const amount = Number(invoice.amount || 0);
     const amountPaid = Number(invoice.amount_paid || 0);
     const balance = Math.max(amount - amountPaid, 0);
     const calculatedStatus = getCalculatedInvoiceStatus(amount, amountPaid);
-    const description =
-      invoice.service_description || "Legal service / professional fee";
+    const description = invoice.service_description || "Legal service / professional fee";
+    const generatedAt = new Date().toLocaleString("en-PG");
 
     const invoiceHtml = `
       <!doctype html>
       <html>
         <head>
-          <title>Tumul Legal Invoice - ${invoice.invoice_no}</title>
           <meta charset="utf-8" />
+          <title>Tumul Legal Invoice - ${escapeHtml(invoice.invoice_no)}</title>
           <style>
-            @page { size: A4; margin: 12mm; }
             * { box-sizing: border-box; }
-            body { margin: 0; background: #e5e7eb; color: #111827; font-family: Arial, Helvetica, sans-serif; }
-            .toolbar { max-width: 900px; margin: 18px auto; display: flex; justify-content: flex-end; gap: 10px; }
-            .toolbar button { border: 0; border-radius: 10px; padding: 12px 18px; font-weight: 700; cursor: pointer; }
-            .print-btn { background: #d4af37; color: #071d18; font-weight: 800; }
-            .close-btn { background: #ffffff; color: #111827; border: 1px solid #d1d5db !important; }
-            .invoice-page { width: 900px; max-width: 100%; margin: 0 auto 30px; background: #ffffff; padding: 46px; box-shadow: 0 18px 45px rgba(15, 23, 42, 0.18); }
-            .header { display: flex; justify-content: space-between; gap: 28px; border-bottom: 2px solid #e5e7eb; padding-bottom: 28px; }
-            .logo { width: 240px; max-height: 120px; object-fit: contain; object-position: left center; }
-            .firm-name { margin: 14px 0 4px; font-size: 28px; letter-spacing: 1px; font-weight: 800; }
-            .tagline { margin: 0; color: #b8860b; font-weight: 700; }
-            .address { text-align: right; font-size: 13px; line-height: 1.55; color: #334155; }
-            .address strong { color: #111827; }
-            .title-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; margin-top: 36px; }
-            h1 { margin: 0; font-size: 46px; letter-spacing: 2px; }
-            .subtitle { margin-top: 8px; color: #64748b; }
-            .invoice-box { border: 1px solid #d1d5db; border-radius: 14px; padding: 18px; min-width: 270px; font-size: 14px; line-height: 1.8; }
+            body { margin: 0; background: #e5e7eb; font-family: Arial, Helvetica, sans-serif; color: #111827; }
+            .toolbar { position: sticky; top: 0; display: flex; justify-content: flex-end; gap: 10px; padding: 14px 24px; background: #e5e7eb; }
+            .toolbar button { border: 1px solid #cbd5e1; border-radius: 10px; padding: 12px 18px; cursor: pointer; font-weight: 700; background: white; }
+            .toolbar .print { background: #d4af37; border-color: #d4af37; color: #071d18; }
+            .page { width: 210mm; min-height: 297mm; margin: 0 auto 24px; background: white; padding: 18mm 16mm; }
+            .header { display: flex; justify-content: space-between; gap: 30px; padding-bottom: 18px; border-bottom: 3px solid #0b2b24; }
+            .brand { display: flex; align-items: center; gap: 18px; }
+            .brand img { width: 105px; height: auto; object-fit: contain; }
+            .brand h1 { margin: 0; color: #0b2b24; font-size: 27px; letter-spacing: .02em; }
+            .brand p { margin: 5px 0 0; color: #9a7614; font-size: 12px; font-weight: 700; }
+            .firm { text-align: right; font-size: 11px; line-height: 1.55; color: #475569; }
+            .title { margin: 26px 0 18px; display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; }
+            .eyebrow { color: #9a7614; font-size: 11px; font-weight: 800; letter-spacing: .18em; text-transform: uppercase; }
+            .title h2 { margin: 7px 0 4px; font-size: 30px; color: #0f172a; }
+            .subtitle { color: #64748b; font-size: 13px; }
+            .status-box { border: 1px solid #d8dee6; border-radius: 10px; padding: 12px 14px; min-width: 205px; font-size: 11px; line-height: 1.7; }
             .status { font-weight: 800; color: ${calculatedStatus === "Paid" ? "#047857" : calculatedStatus === "Part Paid" ? "#0369a1" : "#b45309"}; }
-            .details-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 34px; }
-            .detail-card { border: 1px solid #d1d5db; border-radius: 14px; padding: 18px; }
-            .label { margin: 0 0 8px; font-size: 11px; letter-spacing: 1.8px; text-transform: uppercase; color: #64748b; font-weight: 800; }
-            .value { margin: 0; font-size: 18px; font-weight: 800; }
-            table { width: 100%; border-collapse: collapse; margin-top: 34px; }
-            th { background: #0f172a; color: #ffffff; padding: 16px; text-align: left; font-size: 14px; }
-            td { border: 1px solid #d1d5db; padding: 16px; font-size: 14px; }
+            .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 18px 0; }
+            .card { border: 1px solid #d8dee6; border-radius: 10px; padding: 13px 15px; }
+            .label { color: #64748b; text-transform: uppercase; letter-spacing: .12em; font-size: 9px; font-weight: 800; margin-bottom: 6px; }
+            .value { font-size: 13px; font-weight: 700; white-space: pre-wrap; overflow-wrap: anywhere; }
+            .section { margin-top: 24px; break-inside: avoid; }
+            .section h3 { margin: 0 0 10px; padding-bottom: 7px; border-bottom: 2px solid #d4af37; color: #0b2b24; font-size: 17px; }
+            table { width: 100%; border-collapse: collapse; font-size: 10px; }
+            th { background: #0b2b24; color: white; text-align: left; padding: 9px 8px; }
+            td { border: 1px solid #d8dee6; padding: 10px 8px; vertical-align: top; }
             .right { text-align: right; }
-            .totals { display: flex; justify-content: flex-end; margin-top: 34px; }
-            .total-box { width: 340px; border: 1px solid #d1d5db; border-radius: 14px; padding: 18px; }
-            .total-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #e5e7eb; }
-            .total-row:last-child { border-bottom: 0; padding-top: 16px; font-size: 22px; font-weight: 900; }
-            .notes { margin-top: 48px; border-top: 1px solid #e5e7eb; padding-top: 22px; color: #475569; font-size: 14px; line-height: 1.6; }
-            @media print { body { background: #ffffff; } .toolbar { display: none; } .invoice-page { width: 100%; margin: 0; padding: 0; box-shadow: none; } }
+            .totals { margin: 14px 0 0 auto; width: 48%; border: 1px solid #d8dee6; border-radius: 10px; padding: 10px 14px; }
+            .total-row { display: flex; justify-content: space-between; gap: 20px; padding: 8px 0; border-bottom: 1px solid #e5e7eb; font-size: 11px; }
+            .total-row:last-child { border-bottom: 0; color: #0b2b24; font-size: 14px; font-weight: 900; }
+            .notice { border: 1px solid #d8dee6; border-radius: 10px; padding: 12px; color: #475569; font-size: 11px; line-height: 1.55; }
+            .footer { margin-top: 30px; padding-top: 12px; border-top: 1px solid #d8dee6; color: #64748b; font-size: 9px; display: flex; justify-content: space-between; gap: 20px; }
+            @media print {
+              body { background: white; }
+              .toolbar { display: none; }
+              .page { width: auto; min-height: auto; margin: 0; padding: 12mm; }
+              @page { size: A4; margin: 8mm; }
+            }
           </style>
         </head>
         <body>
           <div class="toolbar">
-            <button class="close-btn" onclick="window.close()">Close</button>
-            <button class="print-btn" onclick="window.print()">Print / Save PDF</button>
+            <button onclick="window.close()">Close</button>
+            <button class="print" onclick="window.print()">Print / Save PDF</button>
           </div>
-          <section class="invoice-page">
-            <div class="header">
-              <div>
-                <img class="logo" src="/tumul-logo.png" alt="Tumul Legal Logo" />
-                <div class="firm-name">TUMUL LEGAL</div>
-                <p class="tagline">Excellence, Experience, Integrity</p>
+
+          <main class="page">
+            <header class="header">
+              <div class="brand">
+                <img src="/tumul-logo.png" alt="Tumul Legal" />
+                <div>
+                  <h1>TUMUL LEGAL</h1>
+                  <p>Excellence, Experience, Integrity</p>
+                </div>
               </div>
-              <div class="address">
+              <div class="firm">
                 <strong>P.O. Box 5856</strong><br/>
-                Boroko<br/>
-                National Capital District<br/>
+                Boroko, National Capital District<br/>
                 Papua New Guinea<br/><br/>
-                <strong>Physical Address</strong><br/>
                 Level 2, Suite 3, Waigani Haus<br/>
                 Section 31, Allotment 5<br/>
-                Mokoraha Road, Waigani, NCD<br/><br/>
+                Mokoraha Road, Waigani, NCD<br/>
                 Phone: +675 78993998<br/>
                 Email: mek@tumullegal.com
               </div>
-            </div>
-            <div class="title-row">
-              <div><h1>INVOICE</h1><div class="subtitle">Professional legal services</div></div>
-              <div class="invoice-box">
-                <div><strong>Invoice No:</strong> ${invoice.invoice_no || "N/A"}</div>
-                <div><strong>Invoice Date:</strong> ${invoiceDate}</div>
-                <div><strong>Due Date:</strong> ${dueDate}</div>
-                <div><strong>Status:</strong> <span class="status">${calculatedStatus}</span></div>
+            </header>
+
+            <section class="title">
+              <div>
+                <div class="eyebrow">Financial Document</div>
+                <h2>INVOICE — ${escapeHtml(invoice.invoice_no || "N/A")}</h2>
+                <div class="subtitle">Professional Legal Services</div>
               </div>
-            </div>
-            <div class="details-grid">
-              <div class="detail-card"><p class="label">Bill To</p><p class="value">${invoice.client_name || "Client Name"}</p></div>
-              <div class="detail-card"><p class="label">Matter</p><p class="value">${invoice.matter_no || "Matter Number"}</p></div>
-            </div>
-            <table>
-              <thead><tr><th>Description</th><th class="right">Amount</th></tr></thead>
-              <tbody><tr><td>${description}</td><td class="right"><strong>${currency(amount)}</strong></td></tr></tbody>
-            </table>
-            <div class="totals"><div class="total-box">
-              <div class="total-row"><span>Subtotal</span><strong>${currency(amount)}</strong></div>
-              <div class="total-row"><span>Amount Paid</span><strong>${currency(amountPaid)}</strong></div>
-              <div class="total-row"><span>Balance</span><span>${currency(balance)}</span></div>
-            </div></div>
-            <div class="notes"><strong>Notes</strong><br/>Thank you for choosing Tumul Legal. This invoice was generated from the Tumul Legal Management System.</div>
-          </section>
+              <div class="status-box">
+                <strong>Issued:</strong> ${escapeHtml(invoiceDate)}<br/>
+                <strong>Due:</strong> ${escapeHtml(dueDate)}<br/>
+                <strong>Status:</strong> <span class="status">${escapeHtml(calculatedStatus)}</span>
+              </div>
+            </section>
+
+            <section class="grid">
+              <div class="card"><div class="label">Bill To</div><div class="value">${escapeHtml(invoice.client_name || "Client Name")}</div></div>
+              <div class="card"><div class="label">Matter</div><div class="value">${escapeHtml(invoice.matter_no || "Matter Number")}</div></div>
+            </section>
+
+            <section class="section">
+              <h3>Professional Fees</h3>
+              <table>
+                <thead><tr><th>Description</th><th class="right">Amount</th></tr></thead>
+                <tbody><tr><td>${escapeHtml(description)}</td><td class="right"><strong>${escapeHtml(currency(amount))}</strong></td></tr></tbody>
+              </table>
+              <div class="totals">
+                <div class="total-row"><span>Invoice Total</span><strong>${escapeHtml(currency(amount))}</strong></div>
+                <div class="total-row"><span>Amount Paid</span><strong>${escapeHtml(currency(amountPaid))}</strong></div>
+                <div class="total-row"><span>Balance Due</span><span>${escapeHtml(currency(balance))}</span></div>
+              </div>
+            </section>
+
+            <section class="section">
+              <h3>Document Note</h3>
+              <div class="notice">Thank you for choosing Tumul Legal. This invoice is an official financial document generated from the Tumul Legal Management System.</div>
+            </section>
+
+            <footer class="footer">
+              <span>Tumul Legal • Financial Document • Generated by Tumul Legal Management System</span>
+              <span>Printed by: ${escapeHtml(currentUserProfile.name || currentEmail || "Authorized User")} • ${escapeHtml(generatedAt)}</span>
+            </footer>
+          </main>
         </body>
       </html>
     `;
 
-    const printWindow = window.open("", "_blank", "width=950,height=1100");
+    const printWindow = window.open("", "_blank", "width=1000,height=1100");
     if (!printWindow) {
       alert("Popup blocked. Please allow popups and try again.");
       return;
@@ -2052,6 +2108,28 @@ export default function TumulLegalV4() {
 
         <main className="flex-1 p-4 sm:p-6 lg:p-8">
           <div id="print-root" data-print-section={printSection || activeTab}>
+          <div className="official-print-header">
+            <div className="official-print-brand">
+              <div className="official-print-brand-left">
+                <img src="/tumul-logo.png" alt="Tumul Legal" />
+                <div>
+                  <h1>TUMUL LEGAL</h1>
+                  <p>Excellence, Experience, Integrity</p>
+                </div>
+              </div>
+              <div className="official-print-firm">
+                <strong>P.O. Box 5856</strong><br />
+                Boroko, National Capital District, Papua New Guinea<br />
+                Level 2, Suite 3, Waigani Haus, Mokoraha Road, Waigani, NCD<br />
+                Phone: +675 78993998 • Email: mek@tumullegal.com
+              </div>
+            </div>
+            <div className="official-print-title">
+              <div className="official-print-eyebrow">{officialPrintMeta.classification}</div>
+              <h2>{officialPrintMeta.title}</h2>
+              <p>Generated from the Tumul Legal Management System</p>
+            </div>
+          </div>
           <div className={`${glassCard} mb-6 overflow-hidden no-print`}>
             <div className="flex flex-col gap-5 p-6 lg:flex-row lg:items-center lg:justify-between">
               <div>
@@ -3493,6 +3571,10 @@ export default function TumulLegalV4() {
               </div>
             </div>
           )}
+          <div className="official-print-footer">
+            <span>Tumul Legal • Official System Document</span>
+            <span>Printed by: {currentUserProfile.name || currentEmail || "Authorized User"} • {new Date().toLocaleString("en-PG")}</span>
+          </div>
           </div>
 
           <style jsx global>{`
@@ -3513,6 +3595,11 @@ export default function TumulLegalV4() {
               box-shadow: 0 0 0 1px rgba(212, 175, 55, 0.16);
             }
 
+            .official-print-header,
+            .official-print-footer {
+              display: none;
+            }
+
             @media print {
               @page {
                 size: A4 portrait;
@@ -3521,6 +3608,93 @@ export default function TumulLegalV4() {
 
               html, body {
                 background: #ffffff !important;
+              }
+
+              body.printing-active .official-print-header,
+              body.printing-active .official-print-header *,
+              body.printing-active .official-print-footer,
+              body.printing-active .official-print-footer * {
+                visibility: visible !important;
+              }
+
+              body.printing-active .official-print-header {
+                display: block !important;
+                margin-bottom: 8mm !important;
+                color: #111827 !important;
+              }
+
+              body.printing-active .official-print-brand {
+                display: flex !important;
+                justify-content: space-between !important;
+                gap: 8mm !important;
+                padding-bottom: 5mm !important;
+                border-bottom: 3px solid #0b2b24 !important;
+              }
+
+              body.printing-active .official-print-brand-left {
+                display: flex !important;
+                align-items: center !important;
+                gap: 5mm !important;
+              }
+
+              body.printing-active .official-print-brand-left img {
+                width: 28mm !important;
+                height: auto !important;
+              }
+
+              body.printing-active .official-print-brand-left h1 {
+                margin: 0 !important;
+                color: #0b2b24 !important;
+                font-size: 20pt !important;
+              }
+
+              body.printing-active .official-print-brand-left p {
+                margin: 2mm 0 0 !important;
+                color: #9a7614 !important;
+                font-size: 9pt !important;
+                font-weight: 700 !important;
+              }
+
+              body.printing-active .official-print-firm {
+                text-align: right !important;
+                color: #475569 !important;
+                font-size: 7.5pt !important;
+                line-height: 1.45 !important;
+              }
+
+              body.printing-active .official-print-title {
+                margin: 7mm 0 6mm !important;
+              }
+
+              body.printing-active .official-print-eyebrow {
+                color: #9a7614 !important;
+                font-size: 7.5pt !important;
+                font-weight: 800 !important;
+                letter-spacing: .16em !important;
+                text-transform: uppercase !important;
+              }
+
+              body.printing-active .official-print-title h2 {
+                margin: 2mm 0 1mm !important;
+                color: #0f172a !important;
+                font-size: 20pt !important;
+              }
+
+              body.printing-active .official-print-title p {
+                margin: 0 !important;
+                color: #64748b !important;
+                font-size: 8pt !important;
+              }
+
+              body.printing-active .official-print-footer {
+                display: flex !important;
+                justify-content: space-between !important;
+                gap: 8mm !important;
+                margin-top: 8mm !important;
+                padding-top: 3mm !important;
+                border-top: 1px solid #d8dee6 !important;
+                color: #64748b !important;
+                font-size: 7pt !important;
               }
 
               body.printing-active * {
@@ -3585,11 +3759,174 @@ export default function TumulLegalV4() {
                 color: #111827 !important;
               }
 
+              /* Official A4 document cleanup */
+              body.printing-active #print-root {
+                font-size: 9pt !important;
+                overflow: visible !important;
+              }
+
+              body.printing-active #print-root > * {
+                max-width: 100% !important;
+              }
+
+              body.printing-active #print-root .overflow-x-auto,
+              body.printing-active #print-root .overflow-auto,
+              body.printing-active #print-root .overflow-hidden {
+                overflow: visible !important;
+                max-width: 100% !important;
+              }
+
+              body.printing-active #print-root table {
+                table-layout: fixed !important;
+                width: 100% !important;
+                font-size: 7.4pt !important;
+                page-break-inside: auto !important;
+              }
+
+              body.printing-active #print-root thead {
+                display: table-header-group !important;
+              }
+
+              body.printing-active #print-root tfoot {
+                display: table-footer-group !important;
+              }
+
+              body.printing-active #print-root tr {
+                break-inside: avoid !important;
+                page-break-inside: avoid !important;
+              }
+
+              body.printing-active #print-root th,
+              body.printing-active #print-root td {
+                padding: 2.2mm 1.6mm !important;
+                white-space: normal !important;
+                overflow-wrap: anywhere !important;
+                word-break: normal !important;
+                vertical-align: top !important;
+              }
+
               body.printing-active #print-root .rounded-3xl,
               body.printing-active #print-root .rounded-2xl {
                 border: 1px solid #d1d5db !important;
-                break-inside: avoid;
-                page-break-inside: avoid;
+                border-radius: 3mm !important;
+                box-shadow: none !important;
+              }
+
+              /* Keep compact cards together, but allow long lists/reports to flow naturally. */
+              body.printing-active #print-root .grid > .rounded-3xl,
+              body.printing-active #print-root .grid > .rounded-2xl {
+                break-inside: avoid !important;
+                page-break-inside: avoid !important;
+              }
+
+              body.printing-active #print-root .space-y-3 > *,
+              body.printing-active #print-root .space-y-4 > * {
+                break-inside: avoid !important;
+                page-break-inside: avoid !important;
+              }
+
+              /* Remove screen-only scrolling controls from official paper/PDF output. */
+              body.printing-active #print-root ::-webkit-scrollbar {
+                display: none !important;
+                width: 0 !important;
+                height: 0 !important;
+              }
+
+              /* Registers need denser typography to fit cleanly on portrait A4. */
+              body.printing-active #print-root[data-print-section="docket"] table,
+              body.printing-active #print-root[data-print-section="billing"] table {
+                font-size: 6.8pt !important;
+              }
+
+              body.printing-active #print-root[data-print-section="docket"] th,
+              body.printing-active #print-root[data-print-section="docket"] td,
+              body.printing-active #print-root[data-print-section="billing"] th,
+              body.printing-active #print-root[data-print-section="billing"] td {
+                padding: 1.8mm 1.1mm !important;
+              }
+
+              /* Keep short register labels readable instead of breaking inside words. */
+              body.printing-active #print-root[data-print-section="docket"] th:nth-child(5),
+              body.printing-active #print-root[data-print-section="docket"] td:nth-child(5),
+              body.printing-active #print-root[data-print-section="docket"] th:nth-child(6),
+              body.printing-active #print-root[data-print-section="docket"] td:nth-child(6),
+              body.printing-active #print-root[data-print-section="billing"] th:nth-child(9),
+              body.printing-active #print-root[data-print-section="billing"] td:nth-child(9) {
+                white-space: nowrap !important;
+                overflow-wrap: normal !important;
+                word-break: keep-all !important;
+              }
+
+              /* Give status/priority enough room while keeping the registers on portrait A4. */
+              body.printing-active #print-root[data-print-section="docket"] th:nth-child(1),
+              body.printing-active #print-root[data-print-section="docket"] td:nth-child(1) { width: 10% !important; }
+              body.printing-active #print-root[data-print-section="docket"] th:nth-child(2),
+              body.printing-active #print-root[data-print-section="docket"] td:nth-child(2) { width: 11% !important; }
+              body.printing-active #print-root[data-print-section="docket"] th:nth-child(3),
+              body.printing-active #print-root[data-print-section="docket"] td:nth-child(3) { width: 11% !important; }
+              body.printing-active #print-root[data-print-section="docket"] th:nth-child(4),
+              body.printing-active #print-root[data-print-section="docket"] td:nth-child(4) { width: 11% !important; }
+              body.printing-active #print-root[data-print-section="docket"] th:nth-child(5),
+              body.printing-active #print-root[data-print-section="docket"] td:nth-child(5) { width: 12% !important; }
+              body.printing-active #print-root[data-print-section="docket"] th:nth-child(6),
+              body.printing-active #print-root[data-print-section="docket"] td:nth-child(6) { width: 10% !important; }
+              body.printing-active #print-root[data-print-section="docket"] th:nth-child(7),
+              body.printing-active #print-root[data-print-section="docket"] td:nth-child(7) { width: 11% !important; }
+              body.printing-active #print-root[data-print-section="docket"] th:nth-child(8),
+              body.printing-active #print-root[data-print-section="docket"] td:nth-child(8) { width: 10% !important; }
+              body.printing-active #print-root[data-print-section="docket"] th:nth-child(9),
+              body.printing-active #print-root[data-print-section="docket"] td:nth-child(9) { width: 14% !important; }
+
+              body.printing-active #print-root[data-print-section="billing"] th:nth-child(1),
+              body.printing-active #print-root[data-print-section="billing"] td:nth-child(1) { width: 9% !important; }
+              body.printing-active #print-root[data-print-section="billing"] th:nth-child(2),
+              body.printing-active #print-root[data-print-section="billing"] td:nth-child(2) { width: 11% !important; }
+              body.printing-active #print-root[data-print-section="billing"] th:nth-child(3),
+              body.printing-active #print-root[data-print-section="billing"] td:nth-child(3) { width: 10% !important; }
+              body.printing-active #print-root[data-print-section="billing"] th:nth-child(4),
+              body.printing-active #print-root[data-print-section="billing"] td:nth-child(4),
+              body.printing-active #print-root[data-print-section="billing"] th:nth-child(5),
+              body.printing-active #print-root[data-print-section="billing"] td:nth-child(5) { width: 11% !important; }
+              body.printing-active #print-root[data-print-section="billing"] th:nth-child(6),
+              body.printing-active #print-root[data-print-section="billing"] td:nth-child(6),
+              body.printing-active #print-root[data-print-section="billing"] th:nth-child(7),
+              body.printing-active #print-root[data-print-section="billing"] td:nth-child(7),
+              body.printing-active #print-root[data-print-section="billing"] th:nth-child(8),
+              body.printing-active #print-root[data-print-section="billing"] td:nth-child(8) { width: 12% !important; }
+              body.printing-active #print-root[data-print-section="billing"] th:nth-child(9),
+              body.printing-active #print-root[data-print-section="billing"] td:nth-child(9) { width: 12% !important; }
+
+              body.printing-active #print-root[data-print-section="docket"] td:nth-child(5) span,
+              body.printing-active #print-root[data-print-section="docket"] td:nth-child(6) span,
+              body.printing-active #print-root[data-print-section="billing"] td:nth-child(9) span {
+                display: inline-block !important;
+                white-space: nowrap !important;
+                padding-left: 1.5mm !important;
+                padding-right: 1.5mm !important;
+              }
+
+              /* Prevent an official footer from being stranded on a page by itself. */
+              body.printing-active .official-print-footer {
+                break-inside: avoid !important;
+                page-break-inside: avoid !important;
+              }
+
+              /* Compact management reports so headings stay with their content. */
+              body.printing-active #print-root h1,
+              body.printing-active #print-root h2,
+              body.printing-active #print-root h3 {
+                break-after: avoid !important;
+                page-break-after: avoid !important;
+              }
+
+              body.printing-active #print-root[data-print-section="dashboard"] .grid,
+              body.printing-active #print-root[data-print-section="reports"] .grid {
+                gap: 3mm !important;
+              }
+
+              body.printing-active #print-root[data-print-section="activity"] .space-y-3,
+              body.printing-active #print-root[data-print-section="activity"] .space-y-4 {
+                gap: 2mm !important;
               }
             }
           `}</style>
