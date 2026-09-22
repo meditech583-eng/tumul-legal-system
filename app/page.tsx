@@ -1728,6 +1728,32 @@ export default function TumulLegalV4() {
     await loadAllData();
   };
 
+  const handleDeleteInvoice = async (invoice: Invoice) => {
+    if (currentUserProfile.role !== "Super Admin") {
+      alert("Only Super Admin can delete invoices.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete invoice ${invoice.invoice_no}?\n\nThis action cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    const { error } = await supabase
+      .from("invoices")
+      .delete()
+      .eq("id", invoice.id);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    logActivity(`Deleted invoice ${invoice.invoice_no}`, "Billing");
+    await loadAllData();
+    alert(`Invoice ${invoice.invoice_no} deleted successfully.`);
+  };
+
   const handleDeleteMatter = async (matter: Matter) => {
     if (currentUserProfile.role !== "Super Admin" && currentUserProfile.role !== "Lawyer") {
       alert("Only Super Admin or Lawyer can delete matters.");
@@ -3168,6 +3194,14 @@ export default function TumulLegalV4() {
                               >
                                 Print / Save PDF
                               </button>
+                              {currentUserProfile.role === "Super Admin" && (
+                                <button
+                                  onClick={() => handleDeleteInvoice(invoice)}
+                                  className="rounded-2xl border border-rose-400/30 bg-rose-400/10 px-4 py-2 text-xs font-semibold text-rose-200 transition hover:bg-rose-400/20"
+                                >
+                                  Delete
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
