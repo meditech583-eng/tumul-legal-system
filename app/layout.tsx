@@ -15,6 +15,11 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "MTEC – Tumul Legal",
   description: "Legal Management System powered by MTEC",
+  icons: {
+    icon: "/tumul-logo.png",
+    shortcut: "/tumul-logo.png",
+    apple: "/tumul-logo.png",
+  },
 };
 
 export default function RootLayout({
