@@ -24,7 +24,6 @@ type MatterStatus =
 
 type Priority = "High" | "Medium" | "Low";
 type InvoiceStatus = "Paid" | "Unpaid" | "Part Paid";
-type AuthMode = "login" | "signup";
 type MatterFileTab = "overview" | "tasks" | "notes" | "documents" | "billing" | "activity";
 type UserRole =
   | "Super Admin"
@@ -94,10 +93,39 @@ type ActivityItem = {
 type MatterDeadline = {
   id: number;
   matter_id: number;
+  matter_no: string;
   title: string;
   deadline_date: string;
   notes: string | null;
   is_completed: boolean;
+  created_by?: string | null;
+  created_by_email?: string | null;
+  created_at?: string;
+  completed_at?: string | null;
+};
+
+type MatterNote = {
+  id: number;
+  matter_id: number;
+  matter_no: string;
+  note: string;
+  created_by: string;
+  created_by_email?: string | null;
+  created_at: string;
+};
+
+type MatterDocument = {
+  id: number;
+  matter_id: number;
+  matter_no: string;
+  document_name: string;
+  file_name: string;
+  file_path: string;
+  file_type?: string | null;
+  file_size?: number | null;
+  category?: string | null;
+  uploaded_by?: string | null;
+  uploaded_by_email?: string | null;
   created_at?: string;
 };
 
@@ -246,7 +274,7 @@ const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 export default function TumulLegalV4() {
   const [session, setSession] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [authMode, setAuthMode] = useState<AuthMode>("login");
+  const [accessVerified, setAccessVerified] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [authMessage, setAuthMessage] = useState("");
@@ -318,6 +346,16 @@ export default function TumulLegalV4() {
     notes: "",
   });
   const [isSavingDeadline, setIsSavingDeadline] = useState(false);
+
+  const [matterNotes, setMatterNotes] = useState<MatterNote[]>([]);
+  const [noteText, setNoteText] = useState("");
+  const [isSavingNote, setIsSavingNote] = useState(false);
+
+  const [matterDocuments, setMatterDocuments] = useState<MatterDocument[]>([]);
+  const [documentTitle, setDocumentTitle] = useState("");
+  const [documentCategory, setDocumentCategory] = useState("Client Correspondence");
+  const [documentFile, setDocumentFile] = useState<File | null>(null);
+  const [isUploadingDocument, setIsUploadingDocument] = useState(false);
 
   useEffect(() => {
     const savedTab = localStorage.getItem("activeTab");
@@ -421,7 +459,7 @@ export default function TumulLegalV4() {
           .select("*")
           .order("full_name", { ascending: true }),
         supabase
-          .from("matter_deadlines")
+          .from("tumul_matter_deadlines")
           .select("*")
           .order("deadline_date", { ascending: true }),
       ]);
@@ -448,9 +486,53 @@ export default function TumulLegalV4() {
   };
 
 
+  const verifyStaffAccess = async (nextSession: any) => {
+    const loginEmail = nextSession?.user?.email?.trim().toLowerCase();
+
+    if (!loginEmail) {
+      setAccessVerified(false);
+      return false;
+    }
+
+    const { data, error } = await supabase
+      .from("staff_users")
+      .select("id, full_name, email, role, is_active, created_at, created_by")
+      .eq("email", loginEmail)
+      .maybeSingle();
+
+    if (error) {
+      console.error("Unable to verify staff access:", error.message);
+      setAccessVerified(false);
+      setAuthMessage("Unable to verify your staff access. Please contact the administrator.");
+      await supabase.auth.signOut();
+      return false;
+    }
+
+    if (!data) {
+      setAccessVerified(false);
+      setAuthMessage(
+        "Access denied. Your login is valid, but this email is not an authorised Tumul Legal staff account."
+      );
+      await supabase.auth.signOut();
+      return false;
+    }
+
+    if (data.is_active === false) {
+      setAccessVerified(false);
+      setAuthMessage("Your Tumul Legal staff account has been deactivated. Please contact the administrator.");
+      await supabase.auth.signOut();
+      return false;
+    }
+
+    setStaffUsers([data as StaffUser]);
+    setAccessVerified(true);
+    return true;
+  };
+
+
   const loadDeadlines = async () => {
     const { data, error } = await supabase
-      .from("matter_deadlines")
+      .from("tumul_matter_deadlines")
       .select("*")
       .order("deadline_date", { ascending: true });
 
@@ -461,7 +543,7 @@ export default function TumulLegalV4() {
 
   const loadDeadlinesForMatter = async (matterId: number) => {
     const { data, error } = await supabase
-      .from("matter_deadlines")
+      .from("tumul_matter_deadlines")
       .select("*")
       .eq("matter_id", matterId)
       .order("deadline_date", { ascending: true });
@@ -469,6 +551,38 @@ export default function TumulLegalV4() {
     if (!error) {
       setMatterDeadlines((data as MatterDeadline[]) || []);
     }
+  };
+
+  const loadNotesForMatter = async (matterId: number) => {
+    const { data, error } = await supabase
+      .from("tumul_matter_notes")
+      .select("*")
+      .eq("matter_id", matterId)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("Unable to load matter notes:", error.message);
+      setMatterNotes([]);
+      return;
+    }
+
+    setMatterNotes((data as MatterNote[]) || []);
+  };
+
+  const loadDocumentsForMatter = async (matterId: number) => {
+    const { data, error } = await supabase
+      .from("tumul_matter_documents")
+      .select("*")
+      .eq("matter_id", matterId)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("Unable to load matter documents:", error.message);
+      setMatterDocuments([]);
+      return;
+    }
+
+    setMatterDocuments((data as MatterDocument[]) || []);
   };
 
   const logActivity = (
@@ -490,53 +604,69 @@ export default function TumulLegalV4() {
   };
 
   useEffect(() => {
+    const clearProtectedData = () => {
+      setMatters([]);
+      setClients([]);
+      setInvoices([]);
+      setStaffUsers([]);
+      setDeadlines([]);
+      setMatterDeadlines([]);
+      setMatterNotes([]);
+      setMatterDocuments([]);
+    };
+
+    const authoriseAndLoad = async (nextSession: any) => {
+      setLoading(true);
+      setAccessVerified(false);
+
+      const allowed = await verifyStaffAccess(nextSession);
+
+      if (!allowed) {
+        clearProtectedData();
+        setLoading(false);
+        return;
+      }
+
+      await loadAllData();
+      setLoading(false);
+    };
+
     const getSession = async () => {
       const {
-        data: { session },
+        data: { session: initialSession },
       } = await supabase.auth.getSession();
 
-      setSession(session);
+      setSession(initialSession);
 
-      if (session) {
-        await loadAllData();
+      if (initialSession) {
+        await authoriseAndLoad(initialSession);
       } else {
+        setAccessVerified(false);
         setLoading(false);
       }
     };
 
-    getSession();
+    void getSession();
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event: string, nextSession: any) => {
+    } = supabase.auth.onAuthStateChange((_event: string, nextSession: any) => {
       setSession(nextSession);
 
-      if (nextSession) {
-        await loadAllData();
-      } else {
-        setMatters([]);
-        setClients([]);
-        setInvoices([]);
-        setStaffUsers([]);
-        setLoading(false);
-      }
+      // Do not await database calls directly inside onAuthStateChange.
+      window.setTimeout(() => {
+        if (nextSession) {
+          void authoriseAndLoad(nextSession);
+        } else {
+          setAccessVerified(false);
+          clearProtectedData();
+          setLoading(false);
+        }
+      }, 0);
     });
 
     return () => subscription.unsubscribe();
   }, []);
-
-  useEffect(() => {
-    if (!session?.user?.email || staffUsers.length === 0) return;
-
-    const matched = staffUsers.find(
-      (staff) => staff.email.toLowerCase() === session.user.email.toLowerCase()
-    );
-
-    if (matched && matched.is_active === false) {
-      supabase.auth.signOut();
-      alert("Your account has been deactivated. Please contact the administrator.");
-    }
-  }, [session, staffUsers]);
 
   useEffect(() => {
     if (!session) return;
@@ -567,24 +697,7 @@ export default function TumulLegalV4() {
     setAuthMessage("");
     setLoading(true);
 
-    if (authMode === "login") {
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (error) {
-        setAuthMessage(error.message);
-        setLoading(false);
-        return;
-      }
-
-      setAuthMessage("Login successful.");
-      setLoading(false);
-      return;
-    }
-
-    const { error } = await supabase.auth.signUp({
+    const { error } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
@@ -595,9 +708,7 @@ export default function TumulLegalV4() {
       return;
     }
 
-    setAuthMessage(
-      "Signup successful. Check your email if confirmation is required."
-    );
+    setAuthMessage("Login successful.");
     setLoading(false);
   };
 
@@ -745,7 +856,11 @@ export default function TumulLegalV4() {
       deadline_date: "",
       notes: "",
     });
-    await loadDeadlinesForMatter(matter.id);
+    await Promise.all([
+      loadDeadlinesForMatter(matter.id),
+      loadNotesForMatter(matter.id),
+      loadDocumentsForMatter(matter.id),
+    ]);
   };
 
   const closeMatterFile = () => {
@@ -754,6 +869,12 @@ export default function TumulLegalV4() {
     setMatterFileTab("overview");
     setIsEditingMatter(false);
     setMatterDeadlines([]);
+    setMatterNotes([]);
+    setMatterDocuments([]);
+    setNoteText("");
+    setDocumentTitle("");
+    setDocumentCategory("Client Correspondence");
+    setDocumentFile(null);
     setDeadlineForm({
       title: "",
       deadline_date: "",
@@ -831,43 +952,72 @@ export default function TumulLegalV4() {
       return;
     }
 
-    if (!deadlineForm.title || !deadlineForm.deadline_date) {
+    const cleanTitle = deadlineForm.title.trim();
+    const cleanDate = deadlineForm.deadline_date;
+    const cleanNotes = deadlineForm.notes.trim();
+
+    if (!cleanTitle || !cleanDate) {
       alert("Please enter deadline title and date.");
       return;
     }
 
+    if (isSavingDeadline) return;
+
     setIsSavingDeadline(true);
 
-    const payload = {
-      matter_id: selectedMatter.id,
-      title: deadlineForm.title,
-      deadline_date: deadlineForm.deadline_date,
-      notes: deadlineForm.notes || null,
-      is_completed: false,
-    };
+    try {
+      const payload = {
+        matter_id: selectedMatter.id,
+        matter_no: selectedMatter.matter_no,
+        title: cleanTitle,
+        deadline_date: cleanDate,
+        notes: cleanNotes || null,
+        is_completed: false,
+        created_by: currentUserProfile.name || null,
+        created_by_email: currentUserProfile.email || null,
+        completed_at: null,
+      };
 
-    const { error } = await supabase.from("matter_deadlines").insert(payload);
+      console.log("Saving deadline:", payload);
 
-    setIsSavingDeadline(false);
+      // Insert first. Avoid chaining .select().single() onto the write request.
+      // We reload the matter deadlines after Supabase confirms the insert.
+      const { error } = await supabase
+        .from("tumul_matter_deadlines")
+        .insert(payload);
 
-    if (error) {
-      alert(error.message);
-      return;
+      if (error) {
+        console.error("Deadline save error:", error);
+        alert(`Unable to save deadline: ${error.message}`);
+        return;
+      }
+
+      setDeadlineForm({
+        title: "",
+        deadline_date: "",
+        notes: "",
+      });
+
+      logActivity(
+        `Added deadline "${cleanTitle}" to ${selectedMatter.matter_no}`,
+        "Deadlines"
+      );
+
+      // Refresh both the case-file list and dashboard counters.
+      await Promise.all([
+        loadDeadlines(),
+        loadDeadlinesForMatter(selectedMatter.id),
+      ]);
+
+      alert("Task / deadline saved successfully.");
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unknown error while saving deadline.";
+      console.error("Deadline save failed:", error);
+      alert(`Unable to save deadline: ${message}`);
+    } finally {
+      setIsSavingDeadline(false);
     }
-
-    logActivity(
-      `Added deadline "${deadlineForm.title}" to ${selectedMatter.matter_no}`,
-      "Deadlines"
-    );
-
-    setDeadlineForm({
-      title: "",
-      deadline_date: "",
-      notes: "",
-    });
-
-    await loadDeadlines();
-    await loadDeadlinesForMatter(selectedMatter.id);
   };
 
   const handleToggleDeadlineComplete = async (deadline: MatterDeadline) => {
@@ -877,8 +1027,11 @@ export default function TumulLegalV4() {
     }
 
     const { error } = await supabase
-      .from("matter_deadlines")
-      .update({ is_completed: !deadline.is_completed })
+      .from("tumul_matter_deadlines")
+      .update({
+        is_completed: !deadline.is_completed,
+        completed_at: deadline.is_completed ? null : new Date().toISOString(),
+      })
       .eq("id", deadline.id);
 
     if (error) {
@@ -907,7 +1060,7 @@ export default function TumulLegalV4() {
     if (!confirmed) return;
 
     const { error } = await supabase
-      .from("matter_deadlines")
+      .from("tumul_matter_deadlines")
       .delete()
       .eq("id", deadline.id);
 
@@ -922,6 +1075,236 @@ export default function TumulLegalV4() {
     if (selectedMatter) {
       await loadDeadlinesForMatter(selectedMatter.id);
     }
+  };
+
+  const handleAddMatterNote = async () => {
+    if (!selectedMatter) {
+      alert("Open a matter first.");
+      return;
+    }
+
+    if (!canEditMatterDetails) {
+      alert("You do not have permission to add case notes.");
+      return;
+    }
+
+    const cleanNote = noteText.trim();
+    if (!cleanNote) {
+      alert("Please enter a case note.");
+      return;
+    }
+
+    setIsSavingNote(true);
+
+    const { error } = await supabase.from("tumul_matter_notes").insert({
+      matter_id: selectedMatter.id,
+      matter_no: selectedMatter.matter_no,
+      note: cleanNote,
+      created_by: currentUserProfile.name,
+      created_by_email: currentUserProfile.email || null,
+    });
+
+    setIsSavingNote(false);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    logActivity(`Added case note to ${selectedMatter.matter_no}`, "Case Notes");
+    setNoteText("");
+    await loadNotesForMatter(selectedMatter.id);
+  };
+
+  const handleDeleteMatterNote = async (note: MatterNote) => {
+    if (currentUserProfile.role !== "Super Admin") {
+      alert("Only Super Admin can delete case notes.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Delete this case note?\n\nThis action cannot be undone."
+    );
+    if (!confirmed) return;
+
+    const { error } = await supabase
+      .from("tumul_matter_notes")
+      .delete()
+      .eq("id", note.id);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    logActivity(`Deleted case note from ${note.matter_no}`, "Case Notes");
+    if (selectedMatter) await loadNotesForMatter(selectedMatter.id);
+  };
+
+  const formatFileSize = (bytes?: number | null) => {
+    const value = Number(bytes || 0);
+    if (!value) return "0 KB";
+    if (value < 1024) return `${value} B`;
+    if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+    return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  const handleUploadMatterDocument = async () => {
+    if (!selectedMatter) {
+      alert("Open a matter first.");
+      return;
+    }
+
+    if (!canEditMatterDetails) {
+      alert("You do not have permission to upload case documents.");
+      return;
+    }
+
+    const cleanTitle = documentTitle.trim();
+    if (!cleanTitle) {
+      alert("Please enter a document title.");
+      return;
+    }
+
+    if (!documentFile) {
+      alert("Please choose a file to upload.");
+      return;
+    }
+
+    if (isUploadingDocument) return;
+    setIsUploadingDocument(true);
+
+    let uploadedPath = "";
+
+    try {
+      const safeName = documentFile.name
+        .replace(/[^a-zA-Z0-9._-]+/g, "-")
+        .replace(/-+/g, "-");
+      uploadedPath = `${selectedMatter.matter_no}/${Date.now()}-${safeName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from("matter-documents")
+        .upload(uploadedPath, documentFile, {
+          cacheControl: "3600",
+          upsert: false,
+          contentType: documentFile.type || undefined,
+        });
+
+      if (uploadError) throw uploadError;
+
+      const { error: recordError } = await supabase
+        .from("tumul_matter_documents")
+        .insert({
+          matter_id: selectedMatter.id,
+          matter_no: selectedMatter.matter_no,
+          document_name: cleanTitle,
+          file_name: documentFile.name,
+          file_path: uploadedPath,
+          file_type: documentFile.type || null,
+          file_size: documentFile.size,
+          category: documentCategory,
+          uploaded_by: currentUserProfile.name || null,
+          uploaded_by_email: currentUserProfile.email || null,
+        });
+
+      if (recordError) {
+        await supabase.storage.from("matter-documents").remove([uploadedPath]);
+        throw recordError;
+      }
+
+      logActivity(
+        `Uploaded document "${cleanTitle}" to ${selectedMatter.matter_no}`,
+        "Documents"
+      );
+
+      setDocumentTitle("");
+      setDocumentCategory("Client Correspondence");
+      setDocumentFile(null);
+
+      const fileInput = document.getElementById(
+        "matter-document-file"
+      ) as HTMLInputElement | null;
+      if (fileInput) fileInput.value = "";
+
+      await loadDocumentsForMatter(selectedMatter.id);
+      alert("Document uploaded successfully.");
+    } catch (error: any) {
+      console.error("Document upload failed:", error);
+      alert(`Unable to upload document: ${error?.message || "Unknown error"}`);
+    } finally {
+      setIsUploadingDocument(false);
+    }
+  };
+
+  const handleOpenMatterDocument = async (documentItem: MatterDocument) => {
+    const { data, error } = await supabase.storage
+      .from("matter-documents")
+      .createSignedUrl(documentItem.file_path, 60 * 10);
+
+    if (error || !data?.signedUrl) {
+      alert(`Unable to open document: ${error?.message || "Could not create secure link."}`);
+      return;
+    }
+
+    window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+  };
+
+  const handleDownloadMatterDocument = async (documentItem: MatterDocument) => {
+    const { data, error } = await supabase.storage
+      .from("matter-documents")
+      .download(documentItem.file_path);
+
+    if (error || !data) {
+      alert(`Unable to download document: ${error?.message || "File not found."}`);
+      return;
+    }
+
+    const url = URL.createObjectURL(data);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = documentItem.file_name || documentItem.document_name;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleDeleteMatterDocument = async (documentItem: MatterDocument) => {
+    if (currentUserProfile.role !== "Super Admin") {
+      alert("Only Super Admin can delete case documents.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete "${documentItem.document_name}"?\n\nThis will remove both the stored file and its case record.`
+    );
+    if (!confirmed) return;
+
+    const { error: storageError } = await supabase.storage
+      .from("matter-documents")
+      .remove([documentItem.file_path]);
+
+    if (storageError) {
+      alert(`Unable to delete stored file: ${storageError.message}`);
+      return;
+    }
+
+    const { error: recordError } = await supabase
+      .from("tumul_matter_documents")
+      .delete()
+      .eq("id", documentItem.id);
+
+    if (recordError) {
+      alert(`Stored file was removed, but the document record could not be deleted: ${recordError.message}`);
+      return;
+    }
+
+    logActivity(
+      `Deleted document "${documentItem.document_name}" from ${documentItem.matter_no}`,
+      "Documents"
+    );
+
+    if (selectedMatter) await loadDocumentsForMatter(selectedMatter.id);
   };
 
   const handleAddMatter = async () => {
@@ -1344,6 +1727,22 @@ export default function TumulLegalV4() {
           .join("")
       : `<tr><td colspan="4" class="empty">No deadlines recorded for this matter.</td></tr>`;
 
+    const noteRows = matterNotes.length
+      ? matterNotes
+          .map(
+            (note) => `
+              <div class="summary" style="margin-bottom:10px;">
+                <div style="font-size:10px;color:#64748b;margin-bottom:6px;">
+                  <strong>${escapeHtml(note.created_by)}</strong> •
+                  ${escapeHtml(new Date(note.created_at).toLocaleString("en-PG"))}
+                </div>
+                ${escapeHtml(note.note)}
+              </div>
+            `
+          )
+          .join("")
+      : `<div class="notice">No case notes recorded for this matter.</div>`;
+
     const invoiceRows =
       permissions.seeFinancials && matterInvoices.length
         ? matterInvoices
@@ -1489,7 +1888,7 @@ export default function TumulLegalV4() {
 
             <section class="section">
               <h3>Notes & History</h3>
-              <div class="notice">Structured case notes are not yet stored in a dedicated Supabase table. This report therefore includes the current case summary, deadlines and recorded matter activity only.</div>
+              ${noteRows}
             </section>
 
             <section class="section">
@@ -1921,7 +2320,7 @@ export default function TumulLegalV4() {
     </div>
   );
 
-  if (loading) {
+  if (loading || (session && !accessVerified)) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-950 text-white">
         Loading Tumul Legal V4...
@@ -1952,11 +2351,10 @@ export default function TumulLegalV4() {
             <div className="mb-6 grid grid-cols-2 gap-3 rounded-2xl bg-white/5 p-1">
               <button
                 onClick={() => {
-                  setAuthMode("login");
                   setAuthMessage("");
                 }}
                 className={`rounded-xl py-3 text-base font-semibold transition ${
-                  authMode === "login"
+                  true
                     ? "bg-[#d4af37] text-slate-950 shadow-lg"
                     : "bg-transparent text-white hover:bg-white/10"
                 }`}
@@ -1966,7 +2364,6 @@ export default function TumulLegalV4() {
 
               <button
                 onClick={() => {
-                  setAuthMode("signup");
                   setAuthMessage("");
                 }}
                 className={`rounded-xl py-3 text-base font-semibold transition ${
@@ -2021,7 +2418,7 @@ export default function TumulLegalV4() {
               >
                 {loading
                   ? "Please wait..."
-                  : authMode === "login"
+                  : true
                   ? "Login to System"
                   : "Create Account"}
               </button>
@@ -2753,9 +3150,198 @@ export default function TumulLegalV4() {
                       </div>
                     )}
 
-                    {matterFileTab === "notes" && <div className="rounded-3xl border border-white/10 bg-white/5 p-6"><h4 className="text-lg font-semibold text-white">Notes & History</h4><p className="mt-2 text-sm text-slate-400">The current database does not yet contain a dedicated matter-notes table. The case summary remains available in Overview. We can add timestamped legal notes safely in the next database upgrade.</p></div>}
-                    {matterFileTab === "documents" && <div className="rounded-3xl border border-white/10 bg-white/5 p-6"><h4 className="text-lg font-semibold text-white">Documents</h4><p className="mt-2 text-sm text-slate-400">Document storage is ready as a workspace section, but file uploads require a Supabase Storage bucket and document-record table before real client files should be stored here.</p></div>}
-                    {matterFileTab === "billing" && <div className="rounded-3xl border border-white/10 bg-white/5 p-6"><div className="mb-4 flex items-center justify-between"><div><h4 className="text-lg font-semibold text-white">Matter Billing</h4><p className="text-sm text-slate-400">Invoices connected to {selectedMatter.matter_no}.</p></div></div><div className="space-y-3">{invoices.filter(i=>i.matter_no===selectedMatter.matter_no).map(i=><div key={i.id} className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-slate-950/40 p-4 md:flex-row md:items-center md:justify-between"><div><p className="font-semibold text-white">{i.invoice_no}</p><p className="text-sm text-slate-400">{i.service_description || "Legal service / professional fee"}</p></div><div className="text-left md:text-right"><p className="font-semibold text-white">{currency(Number(i.amount||0))}</p><span className={`mt-1 inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getStatusClass(i.status)}`}>{i.status}</span></div></div>)}{!invoices.some(i=>i.matter_no===selectedMatter.matter_no) && <p className="rounded-2xl border border-dashed border-white/10 p-5 text-sm text-slate-400">No invoices are linked to this matter.</p>}</div></div>}
+                    {matterFileTab === "notes" && (
+                      <div className="rounded-3xl border border-white/10 bg-white/5 p-6">
+                        <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                          <div>
+                            <h4 className="text-lg font-semibold text-white">Notes & History</h4>
+                            <p className="text-sm text-slate-400">Record timestamped legal notes and matter history.</p>
+                          </div>
+                          <div className="text-sm text-slate-400">Total: {matterNotes.length}</div>
+                        </div>
+
+                        {canEditMatterDetails && (
+                          <div className="rounded-2xl border border-[#d4af37]/20 bg-[#d4af37]/5 p-4">
+                            <label className="mb-2 block text-sm font-semibold text-slate-200">Add Case Note</label>
+                            <textarea
+                              value={noteText}
+                              onChange={(e) => setNoteText(e.target.value)}
+                              placeholder="Enter client conference notes, legal updates, instructions received, filing history or other matter information..."
+                              className={`${inputClass} min-h-[140px] resize-y`}
+                            />
+                            <div className="mt-3 flex items-center justify-between gap-3">
+                              <p className="text-xs text-slate-400">
+                                Saved as {currentUserProfile.name} with the current date and time.
+                              </p>
+                              <button onClick={handleAddMatterNote} disabled={isSavingNote || !noteText.trim()} className={primaryButton}>
+                                {isSavingNote ? "Saving..." : "Save Note"}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="mt-5 space-y-3">
+                          {matterNotes.length === 0 && (
+                            <div className="rounded-2xl border border-dashed border-white/10 px-4 py-6 text-sm text-slate-400">
+                              No case notes have been recorded for this matter yet.
+                            </div>
+                          )}
+                          {matterNotes.map((note) => (
+                            <div key={note.id} className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+                              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                <div className="min-w-0">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <p className="font-semibold text-white">{note.created_by}</p>
+                                    <span className="text-xs text-slate-500">{new Date(note.created_at).toLocaleString("en-PG")}</span>
+                                  </div>
+                                  <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-300">{note.note}</p>
+                                </div>
+                                {currentUserProfile.role === "Super Admin" && (
+                                  <button onClick={() => handleDeleteMatterNote(note)} className="shrink-0 rounded-2xl border border-rose-400/30 bg-rose-400/10 px-4 py-2 text-xs font-semibold text-rose-200 hover:bg-rose-400/20">
+                                    Delete
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {matterFileTab === "documents" && (
+                    <div className="space-y-4">
+                      <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+                        <div className="mb-4">
+                          <h3 className="text-lg font-semibold text-white">Case Documents</h3>
+                          <p className="mt-1 text-sm text-slate-400">
+                            Securely upload and manage files linked to this legal matter.
+                          </p>
+                        </div>
+
+                        {canEditMatterDetails && (
+                          <div className="rounded-2xl border border-[#d4af37]/25 bg-[#d4af37]/[0.04] p-4">
+                            <div className="mb-3 text-sm font-semibold text-white">
+                              Upload Case Document
+                            </div>
+                            <div className="grid gap-3 lg:grid-cols-2">
+                              <input
+                                value={documentTitle}
+                                onChange={(e) => setDocumentTitle(e.target.value)}
+                                placeholder="Document title"
+                                className="rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white outline-none placeholder:text-slate-500"
+                              />
+                              <select
+                                value={documentCategory}
+                                onChange={(e) => setDocumentCategory(e.target.value)}
+                                className="rounded-xl border border-white/10 bg-[#17352e] px-4 py-3 text-sm text-white outline-none"
+                              >
+                                <option>Client Correspondence</option>
+                                <option>Contract</option>
+                                <option>Court Document</option>
+                                <option>Evidence</option>
+                                <option>Legal Draft</option>
+                                <option>Other</option>
+                              </select>
+                            </div>
+
+                            <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-center">
+                              <input
+                                id="matter-document-file"
+                                type="file"
+                                onChange={(e) => setDocumentFile(e.target.files?.[0] || null)}
+                                className="min-w-0 flex-1 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-slate-300 file:mr-4 file:rounded-lg file:border-0 file:bg-[#d4af37] file:px-3 file:py-2 file:font-semibold file:text-[#071d18]"
+                              />
+                              <button
+                                type="button"
+                                onClick={handleUploadMatterDocument}
+                                disabled={isUploadingDocument}
+                                className="rounded-xl bg-[#e7c449] px-5 py-3 text-sm font-bold text-[#071d18] disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {isUploadingDocument ? "Uploading..." : "Upload Document"}
+                              </button>
+                            </div>
+                            <p className="mt-2 text-xs text-slate-500">
+                              Files are stored in the private matter-documents storage bucket and linked to {selectedMatter?.matter_no}.
+                            </p>
+                          </div>
+                        )}
+
+                        <div className="mt-5 flex items-center justify-between">
+                          <div>
+                            <div className="font-semibold text-white">Stored Documents</div>
+                            <div className="text-xs text-slate-500">
+                              Files attached to this matter
+                            </div>
+                          </div>
+                          <div className="text-sm text-slate-400">Total: {matterDocuments.length}</div>
+                        </div>
+
+                        <div className="mt-3 space-y-3">
+                          {matterDocuments.length === 0 ? (
+                            <div className="rounded-xl border border-dashed border-white/10 p-5 text-sm text-slate-500">
+                              No documents uploaded for this matter yet.
+                            </div>
+                          ) : (
+                            matterDocuments.map((documentItem) => (
+                              <div
+                                key={documentItem.id}
+                                className="rounded-2xl border border-white/10 bg-[#102720] p-4"
+                              >
+                                <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+                                  <div className="min-w-0">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <div className="font-semibold text-white">
+                                        {documentItem.document_name}
+                                      </div>
+                                      <span className="rounded-full border border-[#d4af37]/30 bg-[#d4af37]/10 px-2 py-1 text-[10px] font-semibold text-[#f2d675]">
+                                        {documentItem.category || "General"}
+                                      </span>
+                                    </div>
+                                    <div className="mt-2 break-all text-xs text-slate-400">
+                                      {documentItem.file_name} • {formatFileSize(documentItem.file_size)}
+                                    </div>
+                                    <div className="mt-1 text-xs text-slate-500">
+                                      Uploaded by {documentItem.uploaded_by || "Unknown User"}
+                                      {documentItem.created_at
+                                        ? ` • ${new Date(documentItem.created_at).toLocaleString("en-PG")}`
+                                        : ""}
+                                    </div>
+                                  </div>
+
+                                  <div className="flex flex-wrap gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenMatterDocument(documentItem)}
+                                      className="rounded-xl border border-emerald-400/30 bg-emerald-400/10 px-4 py-2 text-xs font-semibold text-emerald-200"
+                                    >
+                                      View
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDownloadMatterDocument(documentItem)}
+                                      className="rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-xs font-semibold text-white"
+                                    >
+                                      Download
+                                    </button>
+                                    {currentUserProfile.role === "Super Admin" && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeleteMatterDocument(documentItem)}
+                                        className="rounded-xl border border-rose-400/30 bg-rose-400/10 px-4 py-2 text-xs font-semibold text-rose-200"
+                                      >
+                                        Delete
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {matterFileTab === "billing" && <div className="rounded-3xl border border-white/10 bg-white/5 p-6"><div className="mb-4 flex items-center justify-between"><div><h4 className="text-lg font-semibold text-white">Matter Billing</h4><p className="text-sm text-slate-400">Invoices connected to {selectedMatter.matter_no}.</p></div></div><div className="space-y-3">{invoices.filter(i=>i.matter_no===selectedMatter.matter_no).map(i=><div key={i.id} className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-slate-950/40 p-4 md:flex-row md:items-center md:justify-between"><div><p className="font-semibold text-white">{i.invoice_no}</p><p className="text-sm text-slate-400">{i.service_description || "Legal service / professional fee"}</p></div><div className="text-left md:text-right"><p className="font-semibold text-white">{currency(Number(i.amount||0))}</p><span className={`mt-1 inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getStatusClass(i.status)}`}>{i.status}</span></div></div>)}{!invoices.some(i=>i.matter_no===selectedMatter.matter_no) && <p className="rounded-2xl border border-dashed border-white/10 p-5 text-sm text-slate-400">No invoices are linked to this matter.</p>}</div></div>}
                     {matterFileTab === "activity" && <div className="rounded-3xl border border-white/10 bg-white/5 p-6"><h4 className="text-lg font-semibold text-white">Matter Activity</h4><p className="mt-1 text-sm text-slate-400">Recent recorded actions that reference {selectedMatter.matter_no}.</p><div className="mt-4 space-y-3">{activityLog.filter(a=>a.action.includes(selectedMatter.matter_no)).map(a=><div key={a.id} className="rounded-2xl border border-white/10 bg-slate-950/40 p-4"><p className="text-sm font-semibold text-white">{a.action}</p><p className="mt-1 text-xs text-slate-400">{a.actor} • {a.role} • {a.time}</p></div>)}{!activityLog.some(a=>a.action.includes(selectedMatter.matter_no)) && <p className="rounded-2xl border border-dashed border-white/10 p-5 text-sm text-slate-400">No matching activity recorded in this browser yet.</p>}</div></div>}
                     {matterFileTab === "documents" ? null : null}
 
