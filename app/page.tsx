@@ -24,7 +24,6 @@ type MatterStatus =
 
 type Priority = "High" | "Medium" | "Low";
 type InvoiceStatus = "Paid" | "Unpaid" | "Part Paid";
-type AuthMode = "login" | "signup";
 type UserRole =
   | "Super Admin"
   | "Lawyer"
@@ -245,7 +244,6 @@ const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 export default function TumulLegalV4() {
   const [session, setSession] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [authMode, setAuthMode] = useState<AuthMode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [authMessage, setAuthMessage] = useState("");
@@ -567,24 +565,7 @@ export default function TumulLegalV4() {
     setAuthMessage("");
     setLoading(true);
 
-    if (authMode === "login") {
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (error) {
-        setAuthMessage(error.message);
-        setLoading(false);
-        return;
-      }
-
-      setAuthMessage("Login successful.");
-      setLoading(false);
-      return;
-    }
-
-    const { error } = await supabase.auth.signUp({
+    const { error } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
@@ -595,9 +576,7 @@ export default function TumulLegalV4() {
       return;
     }
 
-    setAuthMessage(
-      "Signup successful. Check your email if confirmation is required."
-    );
+    setAuthMessage("Login successful.");
     setLoading(false);
   };
 
@@ -1634,36 +1613,6 @@ export default function TumulLegalV4() {
               </p>
             </div>
 
-            <div className="mb-6 grid grid-cols-2 gap-3 rounded-2xl bg-white/5 p-1">
-              <button
-                onClick={() => {
-                  setAuthMode("login");
-                  setAuthMessage("");
-                }}
-                className={`rounded-xl py-3 text-base font-semibold transition ${
-                  authMode === "login"
-                    ? "bg-cyan-400 text-slate-950 shadow-lg"
-                    : "bg-transparent text-white hover:bg-white/10"
-                }`}
-              >
-                Login
-              </button>
-
-              <button
-                onClick={() => {
-                  setAuthMode("signup");
-                  setAuthMessage("");
-                }}
-                className={`rounded-xl py-3 text-base font-semibold transition ${
-                  authMode === "signup"
-                    ? "bg-cyan-400 text-slate-950 shadow-lg"
-                    : "bg-transparent text-white hover:bg-white/10"
-                }`}
-              >
-                Sign Up
-              </button>
-            </div>
-
             <form onSubmit={handleAuth} className="space-y-4">
               <div>
                 <label className="mb-2 block text-sm text-slate-300">
@@ -1704,11 +1653,7 @@ export default function TumulLegalV4() {
                 disabled={loading}
                 className="w-full rounded-2xl bg-gradient-to-r from-cyan-400 to-blue-500 px-4 py-3 font-semibold text-slate-950 transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-70"
               >
-                {loading
-                  ? "Please wait..."
-                  : authMode === "login"
-                  ? "Login to System"
-                  : "Create Account"}
+                {loading ? "Please wait..." : "Login to System"}
               </button>
             </form>
           </div>
