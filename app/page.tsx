@@ -24,6 +24,7 @@ type MatterStatus =
 
 type Priority = "High" | "Medium" | "Low";
 type InvoiceStatus = "Paid" | "Unpaid" | "Part Paid";
+type MatterFileTab = "overview" | "tasks" | "notes" | "documents" | "billing" | "activity";
 type UserRole =
   | "Super Admin"
   | "Lawyer"
@@ -92,10 +93,39 @@ type ActivityItem = {
 type MatterDeadline = {
   id: number;
   matter_id: number;
+  matter_no: string;
   title: string;
   deadline_date: string;
   notes: string | null;
   is_completed: boolean;
+  created_by?: string | null;
+  created_by_email?: string | null;
+  created_at?: string;
+  completed_at?: string | null;
+};
+
+type MatterNote = {
+  id: number;
+  matter_id: number;
+  matter_no: string;
+  note: string;
+  created_by: string;
+  created_by_email?: string | null;
+  created_at: string;
+};
+
+type MatterDocument = {
+  id: number;
+  matter_id: number;
+  matter_no: string;
+  document_name: string;
+  file_name: string;
+  file_path: string;
+  file_type?: string | null;
+  file_size?: number | null;
+  category?: string | null;
+  uploaded_by?: string | null;
+  uploaded_by_email?: string | null;
   created_at?: string;
 };
 
@@ -244,6 +274,7 @@ const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 export default function TumulLegalV4() {
   const [session, setSession] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [accessVerified, setAccessVerified] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [authMessage, setAuthMessage] = useState("");
@@ -277,6 +308,8 @@ export default function TumulLegalV4() {
   const [selectedMatter, setSelectedMatter] = useState<Matter | null>(null);
   const [isMatterPanelOpen, setIsMatterPanelOpen] = useState(false);
   const [isSavingMatter, setIsSavingMatter] = useState(false);
+  const [matterFileTab, setMatterFileTab] = useState<MatterFileTab>("overview");
+  const [isEditingMatter, setIsEditingMatter] = useState(false);
 
   const [clientForm, setClientForm] = useState({
     name: "",
@@ -313,6 +346,16 @@ export default function TumulLegalV4() {
     notes: "",
   });
   const [isSavingDeadline, setIsSavingDeadline] = useState(false);
+
+  const [matterNotes, setMatterNotes] = useState<MatterNote[]>([]);
+  const [noteText, setNoteText] = useState("");
+  const [isSavingNote, setIsSavingNote] = useState(false);
+
+  const [matterDocuments, setMatterDocuments] = useState<MatterDocument[]>([]);
+  const [documentTitle, setDocumentTitle] = useState("");
+  const [documentCategory, setDocumentCategory] = useState("Client Correspondence");
+  const [documentFile, setDocumentFile] = useState<File | null>(null);
+  const [isUploadingDocument, setIsUploadingDocument] = useState(false);
 
   useEffect(() => {
     const savedTab = localStorage.getItem("activeTab");
@@ -372,7 +415,7 @@ export default function TumulLegalV4() {
         return "bg-emerald-400/15 text-emerald-200 border border-emerald-400/30";
       case "Upcoming":
       default:
-        return "bg-sky-400/15 text-sky-200 border border-sky-400/30";
+        return "bg-[#d4af37]/12 text-[#f2d675] border border-[#d4af37]/30";
     }
   };
 
@@ -406,8 +449,6 @@ export default function TumulLegalV4() {
   );
 
   const loadAllData = async () => {
-    setLoading(true);
-
     const [mattersRes, clientsRes, invoicesRes, staffRes, deadlinesRes] =
       await Promise.all([
         supabase.from("matters").select("*").order("id", { ascending: false }),
@@ -418,7 +459,7 @@ export default function TumulLegalV4() {
           .select("*")
           .order("full_name", { ascending: true }),
         supabase
-          .from("matter_deadlines")
+          .from("tumul_matter_deadlines")
           .select("*")
           .order("deadline_date", { ascending: true }),
       ]);
@@ -431,7 +472,6 @@ export default function TumulLegalV4() {
       setDeadlines((deadlinesRes.data as MatterDeadline[]) || []);
     }
 
-    setLoading(false);
   };
 
   const loadStaffUsers = async () => {
@@ -446,9 +486,53 @@ export default function TumulLegalV4() {
   };
 
 
+  const verifyStaffAccess = async (nextSession: any) => {
+    const loginEmail = nextSession?.user?.email?.trim().toLowerCase();
+
+    if (!loginEmail) {
+      setAccessVerified(false);
+      return false;
+    }
+
+    const { data, error } = await supabase
+      .from("staff_users")
+      .select("id, full_name, email, role, is_active, created_at, created_by")
+      .eq("email", loginEmail)
+      .maybeSingle();
+
+    if (error) {
+      console.error("Unable to verify staff access:", error.message);
+      setAccessVerified(false);
+      setAuthMessage("Unable to verify your staff access. Please contact the administrator.");
+      await supabase.auth.signOut();
+      return false;
+    }
+
+    if (!data) {
+      setAccessVerified(false);
+      setAuthMessage(
+        "Access denied. Your login is valid, but this email is not an authorised Tumul Legal staff account."
+      );
+      await supabase.auth.signOut();
+      return false;
+    }
+
+    if (data.is_active === false) {
+      setAccessVerified(false);
+      setAuthMessage("Your Tumul Legal staff account has been deactivated. Please contact the administrator.");
+      await supabase.auth.signOut();
+      return false;
+    }
+
+    setStaffUsers([data as StaffUser]);
+    setAccessVerified(true);
+    return true;
+  };
+
+
   const loadDeadlines = async () => {
     const { data, error } = await supabase
-      .from("matter_deadlines")
+      .from("tumul_matter_deadlines")
       .select("*")
       .order("deadline_date", { ascending: true });
 
@@ -459,7 +543,7 @@ export default function TumulLegalV4() {
 
   const loadDeadlinesForMatter = async (matterId: number) => {
     const { data, error } = await supabase
-      .from("matter_deadlines")
+      .from("tumul_matter_deadlines")
       .select("*")
       .eq("matter_id", matterId)
       .order("deadline_date", { ascending: true });
@@ -467,6 +551,38 @@ export default function TumulLegalV4() {
     if (!error) {
       setMatterDeadlines((data as MatterDeadline[]) || []);
     }
+  };
+
+  const loadNotesForMatter = async (matterId: number) => {
+    const { data, error } = await supabase
+      .from("tumul_matter_notes")
+      .select("*")
+      .eq("matter_id", matterId)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("Unable to load matter notes:", error.message);
+      setMatterNotes([]);
+      return;
+    }
+
+    setMatterNotes((data as MatterNote[]) || []);
+  };
+
+  const loadDocumentsForMatter = async (matterId: number) => {
+    const { data, error } = await supabase
+      .from("tumul_matter_documents")
+      .select("*")
+      .eq("matter_id", matterId)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("Unable to load matter documents:", error.message);
+      setMatterDocuments([]);
+      return;
+    }
+
+    setMatterDocuments((data as MatterDocument[]) || []);
   };
 
   const logActivity = (
@@ -488,53 +604,69 @@ export default function TumulLegalV4() {
   };
 
   useEffect(() => {
+    const clearProtectedData = () => {
+      setMatters([]);
+      setClients([]);
+      setInvoices([]);
+      setStaffUsers([]);
+      setDeadlines([]);
+      setMatterDeadlines([]);
+      setMatterNotes([]);
+      setMatterDocuments([]);
+    };
+
+    const authoriseAndLoad = async (nextSession: any) => {
+      setLoading(true);
+      setAccessVerified(false);
+
+      const allowed = await verifyStaffAccess(nextSession);
+
+      if (!allowed) {
+        clearProtectedData();
+        setLoading(false);
+        return;
+      }
+
+      await loadAllData();
+      setLoading(false);
+    };
+
     const getSession = async () => {
       const {
-        data: { session },
+        data: { session: initialSession },
       } = await supabase.auth.getSession();
 
-      setSession(session);
+      setSession(initialSession);
 
-      if (session) {
-        await loadAllData();
+      if (initialSession) {
+        await authoriseAndLoad(initialSession);
       } else {
+        setAccessVerified(false);
         setLoading(false);
       }
     };
 
-    getSession();
+    void getSession();
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event: string, nextSession: any) => {
+    } = supabase.auth.onAuthStateChange((_event: string, nextSession: any) => {
       setSession(nextSession);
 
-      if (nextSession) {
-        await loadAllData();
-      } else {
-        setMatters([]);
-        setClients([]);
-        setInvoices([]);
-        setStaffUsers([]);
-        setLoading(false);
-      }
+      // Do not await database calls directly inside onAuthStateChange.
+      window.setTimeout(() => {
+        if (nextSession) {
+          void authoriseAndLoad(nextSession);
+        } else {
+          setAccessVerified(false);
+          clearProtectedData();
+          setLoading(false);
+        }
+      }, 0);
     });
 
     return () => subscription.unsubscribe();
   }, []);
-
-  useEffect(() => {
-    if (!session?.user?.email || staffUsers.length === 0) return;
-
-    const matched = staffUsers.find(
-      (staff) => staff.email.toLowerCase() === session.user.email.toLowerCase()
-    );
-
-    if (matched && matched.is_active === false) {
-      supabase.auth.signOut();
-      alert("Your account has been deactivated. Please contact the administrator.");
-    }
-  }, [session, staffUsers]);
 
   useEffect(() => {
     if (!session) return;
@@ -717,18 +849,32 @@ export default function TumulLegalV4() {
       cost_estimate: Number(matter.cost_estimate || 0),
     });
     setIsMatterPanelOpen(true);
+    setMatterFileTab("overview");
+    setIsEditingMatter(false);
     setDeadlineForm({
       title: "",
       deadline_date: "",
       notes: "",
     });
-    await loadDeadlinesForMatter(matter.id);
+    await Promise.all([
+      loadDeadlinesForMatter(matter.id),
+      loadNotesForMatter(matter.id),
+      loadDocumentsForMatter(matter.id),
+    ]);
   };
 
   const closeMatterFile = () => {
     setSelectedMatter(null);
     setIsMatterPanelOpen(false);
+    setMatterFileTab("overview");
+    setIsEditingMatter(false);
     setMatterDeadlines([]);
+    setMatterNotes([]);
+    setMatterDocuments([]);
+    setNoteText("");
+    setDocumentTitle("");
+    setDocumentCategory("Client Correspondence");
+    setDocumentFile(null);
     setDeadlineForm({
       title: "",
       deadline_date: "",
@@ -806,43 +952,72 @@ export default function TumulLegalV4() {
       return;
     }
 
-    if (!deadlineForm.title || !deadlineForm.deadline_date) {
+    const cleanTitle = deadlineForm.title.trim();
+    const cleanDate = deadlineForm.deadline_date;
+    const cleanNotes = deadlineForm.notes.trim();
+
+    if (!cleanTitle || !cleanDate) {
       alert("Please enter deadline title and date.");
       return;
     }
 
+    if (isSavingDeadline) return;
+
     setIsSavingDeadline(true);
 
-    const payload = {
-      matter_id: selectedMatter.id,
-      title: deadlineForm.title,
-      deadline_date: deadlineForm.deadline_date,
-      notes: deadlineForm.notes || null,
-      is_completed: false,
-    };
+    try {
+      const payload = {
+        matter_id: selectedMatter.id,
+        matter_no: selectedMatter.matter_no,
+        title: cleanTitle,
+        deadline_date: cleanDate,
+        notes: cleanNotes || null,
+        is_completed: false,
+        created_by: currentUserProfile.name || null,
+        created_by_email: currentUserProfile.email || null,
+        completed_at: null,
+      };
 
-    const { error } = await supabase.from("matter_deadlines").insert(payload);
+      console.log("Saving deadline:", payload);
 
-    setIsSavingDeadline(false);
+      // Insert first. Avoid chaining .select().single() onto the write request.
+      // We reload the matter deadlines after Supabase confirms the insert.
+      const { error } = await supabase
+        .from("tumul_matter_deadlines")
+        .insert(payload);
 
-    if (error) {
-      alert(error.message);
-      return;
+      if (error) {
+        console.error("Deadline save error:", error);
+        alert(`Unable to save deadline: ${error.message}`);
+        return;
+      }
+
+      setDeadlineForm({
+        title: "",
+        deadline_date: "",
+        notes: "",
+      });
+
+      logActivity(
+        `Added deadline "${cleanTitle}" to ${selectedMatter.matter_no}`,
+        "Deadlines"
+      );
+
+      // Refresh both the case-file list and dashboard counters.
+      await Promise.all([
+        loadDeadlines(),
+        loadDeadlinesForMatter(selectedMatter.id),
+      ]);
+
+      alert("Task / deadline saved successfully.");
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unknown error while saving deadline.";
+      console.error("Deadline save failed:", error);
+      alert(`Unable to save deadline: ${message}`);
+    } finally {
+      setIsSavingDeadline(false);
     }
-
-    logActivity(
-      `Added deadline "${deadlineForm.title}" to ${selectedMatter.matter_no}`,
-      "Deadlines"
-    );
-
-    setDeadlineForm({
-      title: "",
-      deadline_date: "",
-      notes: "",
-    });
-
-    await loadDeadlines();
-    await loadDeadlinesForMatter(selectedMatter.id);
   };
 
   const handleToggleDeadlineComplete = async (deadline: MatterDeadline) => {
@@ -852,8 +1027,11 @@ export default function TumulLegalV4() {
     }
 
     const { error } = await supabase
-      .from("matter_deadlines")
-      .update({ is_completed: !deadline.is_completed })
+      .from("tumul_matter_deadlines")
+      .update({
+        is_completed: !deadline.is_completed,
+        completed_at: deadline.is_completed ? null : new Date().toISOString(),
+      })
       .eq("id", deadline.id);
 
     if (error) {
@@ -882,7 +1060,7 @@ export default function TumulLegalV4() {
     if (!confirmed) return;
 
     const { error } = await supabase
-      .from("matter_deadlines")
+      .from("tumul_matter_deadlines")
       .delete()
       .eq("id", deadline.id);
 
@@ -897,6 +1075,236 @@ export default function TumulLegalV4() {
     if (selectedMatter) {
       await loadDeadlinesForMatter(selectedMatter.id);
     }
+  };
+
+  const handleAddMatterNote = async () => {
+    if (!selectedMatter) {
+      alert("Open a matter first.");
+      return;
+    }
+
+    if (!canEditMatterDetails) {
+      alert("You do not have permission to add case notes.");
+      return;
+    }
+
+    const cleanNote = noteText.trim();
+    if (!cleanNote) {
+      alert("Please enter a case note.");
+      return;
+    }
+
+    setIsSavingNote(true);
+
+    const { error } = await supabase.from("tumul_matter_notes").insert({
+      matter_id: selectedMatter.id,
+      matter_no: selectedMatter.matter_no,
+      note: cleanNote,
+      created_by: currentUserProfile.name,
+      created_by_email: currentUserProfile.email || null,
+    });
+
+    setIsSavingNote(false);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    logActivity(`Added case note to ${selectedMatter.matter_no}`, "Case Notes");
+    setNoteText("");
+    await loadNotesForMatter(selectedMatter.id);
+  };
+
+  const handleDeleteMatterNote = async (note: MatterNote) => {
+    if (currentUserProfile.role !== "Super Admin") {
+      alert("Only Super Admin can delete case notes.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Delete this case note?\n\nThis action cannot be undone."
+    );
+    if (!confirmed) return;
+
+    const { error } = await supabase
+      .from("tumul_matter_notes")
+      .delete()
+      .eq("id", note.id);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    logActivity(`Deleted case note from ${note.matter_no}`, "Case Notes");
+    if (selectedMatter) await loadNotesForMatter(selectedMatter.id);
+  };
+
+  const formatFileSize = (bytes?: number | null) => {
+    const value = Number(bytes || 0);
+    if (!value) return "0 KB";
+    if (value < 1024) return `${value} B`;
+    if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+    return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  const handleUploadMatterDocument = async () => {
+    if (!selectedMatter) {
+      alert("Open a matter first.");
+      return;
+    }
+
+    if (!canEditMatterDetails) {
+      alert("You do not have permission to upload case documents.");
+      return;
+    }
+
+    const cleanTitle = documentTitle.trim();
+    if (!cleanTitle) {
+      alert("Please enter a document title.");
+      return;
+    }
+
+    if (!documentFile) {
+      alert("Please choose a file to upload.");
+      return;
+    }
+
+    if (isUploadingDocument) return;
+    setIsUploadingDocument(true);
+
+    let uploadedPath = "";
+
+    try {
+      const safeName = documentFile.name
+        .replace(/[^a-zA-Z0-9._-]+/g, "-")
+        .replace(/-+/g, "-");
+      uploadedPath = `${selectedMatter.matter_no}/${Date.now()}-${safeName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from("matter-documents")
+        .upload(uploadedPath, documentFile, {
+          cacheControl: "3600",
+          upsert: false,
+          contentType: documentFile.type || undefined,
+        });
+
+      if (uploadError) throw uploadError;
+
+      const { error: recordError } = await supabase
+        .from("tumul_matter_documents")
+        .insert({
+          matter_id: selectedMatter.id,
+          matter_no: selectedMatter.matter_no,
+          document_name: cleanTitle,
+          file_name: documentFile.name,
+          file_path: uploadedPath,
+          file_type: documentFile.type || null,
+          file_size: documentFile.size,
+          category: documentCategory,
+          uploaded_by: currentUserProfile.name || null,
+          uploaded_by_email: currentUserProfile.email || null,
+        });
+
+      if (recordError) {
+        await supabase.storage.from("matter-documents").remove([uploadedPath]);
+        throw recordError;
+      }
+
+      logActivity(
+        `Uploaded document "${cleanTitle}" to ${selectedMatter.matter_no}`,
+        "Documents"
+      );
+
+      setDocumentTitle("");
+      setDocumentCategory("Client Correspondence");
+      setDocumentFile(null);
+
+      const fileInput = document.getElementById(
+        "matter-document-file"
+      ) as HTMLInputElement | null;
+      if (fileInput) fileInput.value = "";
+
+      await loadDocumentsForMatter(selectedMatter.id);
+      alert("Document uploaded successfully.");
+    } catch (error: any) {
+      console.error("Document upload failed:", error);
+      alert(`Unable to upload document: ${error?.message || "Unknown error"}`);
+    } finally {
+      setIsUploadingDocument(false);
+    }
+  };
+
+  const handleOpenMatterDocument = async (documentItem: MatterDocument) => {
+    const { data, error } = await supabase.storage
+      .from("matter-documents")
+      .createSignedUrl(documentItem.file_path, 60 * 10);
+
+    if (error || !data?.signedUrl) {
+      alert(`Unable to open document: ${error?.message || "Could not create secure link."}`);
+      return;
+    }
+
+    window.open(data.signedUrl, "_blank", "noopener,noreferrer");
+  };
+
+  const handleDownloadMatterDocument = async (documentItem: MatterDocument) => {
+    const { data, error } = await supabase.storage
+      .from("matter-documents")
+      .download(documentItem.file_path);
+
+    if (error || !data) {
+      alert(`Unable to download document: ${error?.message || "File not found."}`);
+      return;
+    }
+
+    const url = URL.createObjectURL(data);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = documentItem.file_name || documentItem.document_name;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleDeleteMatterDocument = async (documentItem: MatterDocument) => {
+    if (currentUserProfile.role !== "Super Admin") {
+      alert("Only Super Admin can delete case documents.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete "${documentItem.document_name}"?\n\nThis will remove both the stored file and its case record.`
+    );
+    if (!confirmed) return;
+
+    const { error: storageError } = await supabase.storage
+      .from("matter-documents")
+      .remove([documentItem.file_path]);
+
+    if (storageError) {
+      alert(`Unable to delete stored file: ${storageError.message}`);
+      return;
+    }
+
+    const { error: recordError } = await supabase
+      .from("tumul_matter_documents")
+      .delete()
+      .eq("id", documentItem.id);
+
+    if (recordError) {
+      alert(`Stored file was removed, but the document record could not be deleted: ${recordError.message}`);
+      return;
+    }
+
+    logActivity(
+      `Deleted document "${documentItem.document_name}" from ${documentItem.matter_no}`,
+      "Documents"
+    );
+
+    if (selectedMatter) await loadDocumentsForMatter(selectedMatter.id);
   };
 
   const handleAddMatter = async () => {
@@ -1228,6 +1636,29 @@ export default function TumulLegalV4() {
     logActivity("Exported activity log to CSV", "Activity");
   };
 
+  const getOfficialDocumentMeta = (tab: Tab) => {
+    switch (tab) {
+      case "dashboard":
+        return { classification: "Internal Management Document", title: "OPERATIONS DASHBOARD" };
+      case "docket":
+        return { classification: "Confidential Legal Records", title: "CASE DOCKET REGISTER" };
+      case "clients":
+        return { classification: "Confidential Client Records", title: "CLIENT REGISTER" };
+      case "billing":
+        return { classification: "Financial Document", title: "BILLING REGISTER" };
+      case "reports":
+        return { classification: "Internal Management Report", title: "LEGAL OPERATIONS REPORT" };
+      case "users":
+        return { classification: "Restricted Internal Document", title: "USER & ROLE REGISTER" };
+      case "activity":
+        return { classification: "Restricted Audit Record", title: "ACTIVITY LOG" };
+      default:
+        return { classification: "Official Tumul Legal Document", title: "TUMUL LEGAL RECORD" };
+    }
+  };
+
+  const officialPrintMeta = getOfficialDocumentMeta(printSection || activeTab);
+
   const handlePrint = async (sectionName: string) => {
     if (!permissions.printData) {
       alert("You do not have permission to print.");
@@ -1239,7 +1670,7 @@ export default function TumulLegalV4() {
     document.body.classList.add("printing-active");
     logActivity(`Printed ${sectionName}`, sectionName);
 
-    await wait(250);
+    await wait(400);
     window.print();
   };
 
@@ -1254,8 +1685,253 @@ export default function TumulLegalV4() {
     document.body.classList.add("printing-active");
     logActivity(`Exported ${sectionName} to PDF`, sectionName);
 
-    await wait(250);
+    await wait(400);
     window.print();
+  };
+
+  const handlePrintCaseFile = () => {
+    if (!selectedMatter) return;
+    if (!permissions.printData) {
+      alert("You do not have permission to print case files.");
+      return;
+    }
+
+    const escapeHtml = (value: unknown) =>
+      String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+
+    const matterInvoices = invoices.filter(
+      (invoice) => invoice.matter_no === selectedMatter.matter_no
+    );
+    const matterActivities = activityLog.filter((item) =>
+      item.action.includes(selectedMatter.matter_no)
+    );
+
+    const deadlineRows = matterDeadlines.length
+      ? matterDeadlines
+          .map((deadline) => {
+            const state = getDeadlineState(deadline);
+            return `
+              <tr>
+                <td>${escapeHtml(deadline.title)}</td>
+                <td>${escapeHtml(normalizeDateOnly(deadline.deadline_date))}</td>
+                <td>${escapeHtml(state)}</td>
+                <td>${escapeHtml(deadline.notes || "ΓÇö")}</td>
+              </tr>
+            `;
+          })
+          .join("")
+      : `<tr><td colspan="4" class="empty">No deadlines recorded for this matter.</td></tr>`;
+
+    const noteRows = matterNotes.length
+      ? matterNotes
+          .map(
+            (note) => `
+              <div class="summary" style="margin-bottom:10px;">
+                <div style="font-size:10px;color:#64748b;margin-bottom:6px;">
+                  <strong>${escapeHtml(note.created_by)}</strong> ΓÇó
+                  ${escapeHtml(new Date(note.created_at).toLocaleString("en-PG"))}
+                </div>
+                ${escapeHtml(note.note)}
+              </div>
+            `
+          )
+          .join("")
+      : `<div class="notice">No case notes recorded for this matter.</div>`;
+
+    const invoiceRows =
+      permissions.seeFinancials && matterInvoices.length
+        ? matterInvoices
+            .map((invoice) => {
+              const amount = Number(invoice.amount || 0);
+              const paid = Number(invoice.amount_paid || 0);
+              const balance = Math.max(amount - paid, 0);
+              return `
+                <tr>
+                  <td>${escapeHtml(invoice.invoice_no)}</td>
+                  <td>${escapeHtml(invoice.status)}</td>
+                  <td class="right">${escapeHtml(currency(amount))}</td>
+                  <td class="right">${escapeHtml(currency(paid))}</td>
+                  <td class="right">${escapeHtml(currency(balance))}</td>
+                </tr>
+              `;
+            })
+            .join("")
+        : permissions.seeFinancials
+          ? `<tr><td colspan="5" class="empty">No invoices linked to this matter.</td></tr>`
+          : `<tr><td colspan="5" class="empty">Billing information is hidden for this user role.</td></tr>`;
+
+    const activityRows = matterActivities.length
+      ? matterActivities
+          .map(
+            (item) => `
+              <tr>
+                <td>${escapeHtml(item.time)}</td>
+                <td>${escapeHtml(item.action)}</td>
+                <td>${escapeHtml(item.actor)}</td>
+                <td>${escapeHtml(item.role)}</td>
+              </tr>
+            `
+          )
+          .join("")
+      : `<tr><td colspan="4" class="empty">No matching activity recorded in this browser.</td></tr>`;
+
+    const generatedAt = new Date().toLocaleString("en-PG");
+    const caseFileHtml = `
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Tumul Legal Case File - ${escapeHtml(selectedMatter.matter_no)}</title>
+          <style>
+            * { box-sizing: border-box; }
+            body { margin: 0; background: #e5e7eb; font-family: Arial, Helvetica, sans-serif; color: #111827; }
+            .toolbar { position: sticky; top: 0; display: flex; justify-content: flex-end; gap: 10px; padding: 14px 24px; background: #e5e7eb; }
+            .toolbar button { border: 1px solid #cbd5e1; border-radius: 10px; padding: 12px 18px; cursor: pointer; font-weight: 700; background: white; }
+            .toolbar .print { background: #d4af37; border-color: #d4af37; color: #071d18; }
+            .page { width: 210mm; min-height: 297mm; margin: 0 auto 24px; background: white; padding: 18mm 16mm; }
+            .header { display: flex; justify-content: space-between; gap: 30px; padding-bottom: 18px; border-bottom: 3px solid #0b2b24; }
+            .brand { display: flex; align-items: center; gap: 18px; }
+            .brand img { width: 105px; height: auto; object-fit: contain; }
+            .brand h1 { margin: 0; color: #0b2b24; font-size: 27px; letter-spacing: .02em; }
+            .brand p { margin: 5px 0 0; color: #9a7614; font-size: 12px; font-weight: 700; }
+            .firm { text-align: right; font-size: 11px; line-height: 1.55; color: #475569; }
+            .title { margin: 26px 0 18px; }
+            .eyebrow { color: #9a7614; font-size: 11px; font-weight: 800; letter-spacing: .18em; text-transform: uppercase; }
+            .title h2 { margin: 7px 0 4px; font-size: 30px; color: #0f172a; }
+            .subtitle { color: #64748b; font-size: 13px; }
+            .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 18px 0; }
+            .card { border: 1px solid #d8dee6; border-radius: 10px; padding: 13px 15px; }
+            .label { color: #64748b; text-transform: uppercase; letter-spacing: .12em; font-size: 9px; font-weight: 800; margin-bottom: 6px; }
+            .value { font-size: 13px; font-weight: 700; white-space: pre-wrap; overflow-wrap: anywhere; }
+            .section { margin-top: 24px; break-inside: avoid; }
+            .section h3 { margin: 0 0 10px; padding-bottom: 7px; border-bottom: 2px solid #d4af37; color: #0b2b24; font-size: 17px; }
+            .summary { border: 1px solid #d8dee6; border-radius: 10px; padding: 14px; font-size: 12px; line-height: 1.6; white-space: pre-wrap; }
+            table { width: 100%; border-collapse: collapse; font-size: 10px; }
+            th { background: #0b2b24; color: white; text-align: left; padding: 9px 8px; }
+            td { border: 1px solid #d8dee6; padding: 8px; vertical-align: top; }
+            .right { text-align: right; }
+            .empty { color: #64748b; text-align: center; padding: 16px; }
+            .notice { border: 1px dashed #cbd5e1; border-radius: 10px; padding: 12px; color: #64748b; font-size: 11px; line-height: 1.5; }
+            .footer { margin-top: 30px; padding-top: 12px; border-top: 1px solid #d8dee6; color: #64748b; font-size: 9px; display: flex; justify-content: space-between; gap: 20px; }
+            @media print {
+              body { background: white; }
+              .toolbar { display: none; }
+              .page { width: auto; min-height: auto; margin: 0; padding: 12mm; }
+              @page { size: A4; margin: 8mm; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="toolbar">
+            <button onclick="window.close()">Close</button>
+            <button class="print" onclick="window.print()">Print / Save PDF</button>
+          </div>
+
+          <main class="page">
+            <header class="header">
+              <div class="brand">
+                <img src="/tumul-logo.png" alt="Tumul Legal" />
+                <div>
+                  <h1>TUMUL LEGAL</h1>
+                  <p>Excellence, Experience, Integrity</p>
+                </div>
+              </div>
+              <div class="firm">
+                <strong>P.O. Box 5856</strong><br/>
+                Boroko, National Capital District<br/>
+                Papua New Guinea<br/><br/>
+                Level 2, Suite 3, Waigani Haus<br/>
+                Section 31, Allotment 5<br/>
+                Mokoraha Road, Waigani, NCD<br/>
+                Phone: +675 78993998<br/>
+                Email: mek@tumullegal.com
+              </div>
+            </header>
+
+            <section class="title">
+              <div class="eyebrow">Confidential Legal Matter</div>
+              <h2>CASE FILE ΓÇö ${escapeHtml(selectedMatter.matter_no)}</h2>
+              <div class="subtitle">${escapeHtml(selectedMatter.case_type || "Legal Matter")}</div>
+            </section>
+
+            <section class="grid">
+              <div class="card"><div class="label">Client</div><div class="value">${escapeHtml(selectedMatter.client_name || "Not set")}</div></div>
+              <div class="card"><div class="label">Assigned Lawyer</div><div class="value">${escapeHtml(selectedMatter.assigned_lawyer || "Not assigned")}</div></div>
+              <div class="card"><div class="label">Status</div><div class="value">${escapeHtml(selectedMatter.status)}</div></div>
+              <div class="card"><div class="label">Priority</div><div class="value">${escapeHtml(selectedMatter.priority)}</div></div>
+              <div class="card"><div class="label">Court Date</div><div class="value">${escapeHtml(selectedMatter.court_date ? normalizeDateOnly(selectedMatter.court_date) : "Not scheduled")}</div></div>
+              <div class="card"><div class="label">Estimated Cost</div><div class="value">${escapeHtml(currency(Number(selectedMatter.cost_estimate || 0)))}</div></div>
+            </section>
+
+            <section class="section">
+              <h3>Next Legal Action</h3>
+              <div class="summary">${escapeHtml(selectedMatter.next_step || "No next legal action recorded.")}</div>
+            </section>
+
+            <section class="section">
+              <h3>Case Summary</h3>
+              <div class="summary">${escapeHtml(selectedMatter.summary || "No case summary recorded.")}</div>
+            </section>
+
+            <section class="section">
+              <h3>Tasks & Deadlines</h3>
+              <table>
+                <thead><tr><th>Deadline</th><th>Due Date</th><th>Status</th><th>Notes</th></tr></thead>
+                <tbody>${deadlineRows}</tbody>
+              </table>
+            </section>
+
+            <section class="section">
+              <h3>Notes & History</h3>
+              ${noteRows}
+            </section>
+
+            <section class="section">
+              <h3>Documents</h3>
+              <div class="notice">Uploaded legal documents are not yet attached to the printable case report. Documents will remain individually controlled until secure document storage is added.</div>
+            </section>
+
+            <section class="section">
+              <h3>Billing</h3>
+              <table>
+                <thead><tr><th>Invoice</th><th>Status</th><th class="right">Amount</th><th class="right">Paid</th><th class="right">Balance</th></tr></thead>
+                <tbody>${invoiceRows}</tbody>
+              </table>
+            </section>
+
+            <section class="section">
+              <h3>Activity History</h3>
+              <table>
+                <thead><tr><th>Date / Time</th><th>Action</th><th>User</th><th>Role</th></tr></thead>
+                <tbody>${activityRows}</tbody>
+              </table>
+            </section>
+
+            <footer class="footer">
+              <span>Generated by Tumul Legal Management System</span>
+            <span>Printed by: ${escapeHtml(currentUserProfile.name || currentEmail || "Authorized User")} ΓÇó ${escapeHtml(generatedAt)}</span>
+            </footer>
+          </main>
+        </body>
+      </html>
+    `;
+
+    const printWindow = window.open("", "_blank", "width=1000,height=1100");
+    if (!printWindow) {
+      alert("Popup blocked. Please allow popups and try again.");
+      return;
+    }
+
+    printWindow.document.open();
+    printWindow.document.write(caseFileHtml);
+    printWindow.document.close();
+    printWindow.focus();
+    logActivity(`Opened case file ${selectedMatter.matter_no} for printing`, "Case Docket");
   };
 
   const handlePrintInvoice = (invoice: Invoice) => {
@@ -1264,111 +1940,144 @@ export default function TumulLegalV4() {
       return;
     }
 
+    const escapeHtml = (value: unknown) =>
+      String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+
     const invoiceDate = invoice.issued_date || new Date().toISOString().slice(0, 10);
     const dueDate = invoice.due_date || "Not set";
     const amount = Number(invoice.amount || 0);
     const amountPaid = Number(invoice.amount_paid || 0);
     const balance = Math.max(amount - amountPaid, 0);
     const calculatedStatus = getCalculatedInvoiceStatus(amount, amountPaid);
-    const description =
-      invoice.service_description || "Legal service / professional fee";
+    const description = invoice.service_description || "Legal service / professional fee";
+    const generatedAt = new Date().toLocaleString("en-PG");
 
     const invoiceHtml = `
       <!doctype html>
       <html>
         <head>
-          <title>Tumul Legal Invoice - ${invoice.invoice_no}</title>
           <meta charset="utf-8" />
+          <title>Tumul Legal Invoice - ${escapeHtml(invoice.invoice_no)}</title>
           <style>
-            @page { size: A4; margin: 12mm; }
             * { box-sizing: border-box; }
-            body { margin: 0; background: #e5e7eb; color: #111827; font-family: Arial, Helvetica, sans-serif; }
-            .toolbar { max-width: 900px; margin: 18px auto; display: flex; justify-content: flex-end; gap: 10px; }
-            .toolbar button { border: 0; border-radius: 10px; padding: 12px 18px; font-weight: 700; cursor: pointer; }
-            .print-btn { background: #0ea5e9; color: #ffffff; }
-            .close-btn { background: #ffffff; color: #111827; border: 1px solid #d1d5db !important; }
-            .invoice-page { width: 900px; max-width: 100%; margin: 0 auto 30px; background: #ffffff; padding: 46px; box-shadow: 0 18px 45px rgba(15, 23, 42, 0.18); }
-            .header { display: flex; justify-content: space-between; gap: 28px; border-bottom: 2px solid #e5e7eb; padding-bottom: 28px; }
-            .logo { width: 240px; max-height: 120px; object-fit: contain; object-position: left center; }
-            .firm-name { margin: 14px 0 4px; font-size: 28px; letter-spacing: 1px; font-weight: 800; }
-            .tagline { margin: 0; color: #b8860b; font-weight: 700; }
-            .address { text-align: right; font-size: 13px; line-height: 1.55; color: #334155; }
-            .address strong { color: #111827; }
-            .title-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; margin-top: 36px; }
-            h1 { margin: 0; font-size: 46px; letter-spacing: 2px; }
-            .subtitle { margin-top: 8px; color: #64748b; }
-            .invoice-box { border: 1px solid #d1d5db; border-radius: 14px; padding: 18px; min-width: 270px; font-size: 14px; line-height: 1.8; }
+            body { margin: 0; background: #e5e7eb; font-family: Arial, Helvetica, sans-serif; color: #111827; }
+            .toolbar { position: sticky; top: 0; display: flex; justify-content: flex-end; gap: 10px; padding: 14px 24px; background: #e5e7eb; }
+            .toolbar button { border: 1px solid #cbd5e1; border-radius: 10px; padding: 12px 18px; cursor: pointer; font-weight: 700; background: white; }
+            .toolbar .print { background: #d4af37; border-color: #d4af37; color: #071d18; }
+            .page { width: 210mm; min-height: 297mm; margin: 0 auto 24px; background: white; padding: 18mm 16mm; }
+            .header { display: flex; justify-content: space-between; gap: 30px; padding-bottom: 18px; border-bottom: 3px solid #0b2b24; }
+            .brand { display: flex; align-items: center; gap: 18px; }
+            .brand img { width: 105px; height: auto; object-fit: contain; }
+            .brand h1 { margin: 0; color: #0b2b24; font-size: 27px; letter-spacing: .02em; }
+            .brand p { margin: 5px 0 0; color: #9a7614; font-size: 12px; font-weight: 700; }
+            .firm { text-align: right; font-size: 11px; line-height: 1.55; color: #475569; }
+            .title { margin: 26px 0 18px; display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; }
+            .eyebrow { color: #9a7614; font-size: 11px; font-weight: 800; letter-spacing: .18em; text-transform: uppercase; }
+            .title h2 { margin: 7px 0 4px; font-size: 30px; color: #0f172a; }
+            .subtitle { color: #64748b; font-size: 13px; }
+            .status-box { border: 1px solid #d8dee6; border-radius: 10px; padding: 12px 14px; min-width: 205px; font-size: 11px; line-height: 1.7; }
             .status { font-weight: 800; color: ${calculatedStatus === "Paid" ? "#047857" : calculatedStatus === "Part Paid" ? "#0369a1" : "#b45309"}; }
-            .details-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 34px; }
-            .detail-card { border: 1px solid #d1d5db; border-radius: 14px; padding: 18px; }
-            .label { margin: 0 0 8px; font-size: 11px; letter-spacing: 1.8px; text-transform: uppercase; color: #64748b; font-weight: 800; }
-            .value { margin: 0; font-size: 18px; font-weight: 800; }
-            table { width: 100%; border-collapse: collapse; margin-top: 34px; }
-            th { background: #0f172a; color: #ffffff; padding: 16px; text-align: left; font-size: 14px; }
-            td { border: 1px solid #d1d5db; padding: 16px; font-size: 14px; }
+            .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 18px 0; }
+            .card { border: 1px solid #d8dee6; border-radius: 10px; padding: 13px 15px; }
+            .label { color: #64748b; text-transform: uppercase; letter-spacing: .12em; font-size: 9px; font-weight: 800; margin-bottom: 6px; }
+            .value { font-size: 13px; font-weight: 700; white-space: pre-wrap; overflow-wrap: anywhere; }
+            .section { margin-top: 24px; break-inside: avoid; }
+            .section h3 { margin: 0 0 10px; padding-bottom: 7px; border-bottom: 2px solid #d4af37; color: #0b2b24; font-size: 17px; }
+            table { width: 100%; border-collapse: collapse; font-size: 10px; }
+            th { background: #0b2b24; color: white; text-align: left; padding: 9px 8px; }
+            td { border: 1px solid #d8dee6; padding: 10px 8px; vertical-align: top; }
             .right { text-align: right; }
-            .totals { display: flex; justify-content: flex-end; margin-top: 34px; }
-            .total-box { width: 340px; border: 1px solid #d1d5db; border-radius: 14px; padding: 18px; }
-            .total-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #e5e7eb; }
-            .total-row:last-child { border-bottom: 0; padding-top: 16px; font-size: 22px; font-weight: 900; }
-            .notes { margin-top: 48px; border-top: 1px solid #e5e7eb; padding-top: 22px; color: #475569; font-size: 14px; line-height: 1.6; }
-            @media print { body { background: #ffffff; } .toolbar { display: none; } .invoice-page { width: 100%; margin: 0; padding: 0; box-shadow: none; } }
+            .totals { margin: 14px 0 0 auto; width: 48%; border: 1px solid #d8dee6; border-radius: 10px; padding: 10px 14px; }
+            .total-row { display: flex; justify-content: space-between; gap: 20px; padding: 8px 0; border-bottom: 1px solid #e5e7eb; font-size: 11px; }
+            .total-row:last-child { border-bottom: 0; color: #0b2b24; font-size: 14px; font-weight: 900; }
+            .notice { border: 1px solid #d8dee6; border-radius: 10px; padding: 12px; color: #475569; font-size: 11px; line-height: 1.55; }
+            .footer { margin-top: 30px; padding-top: 12px; border-top: 1px solid #d8dee6; color: #64748b; font-size: 9px; display: flex; justify-content: space-between; gap: 20px; }
+            @media print {
+              body { background: white; }
+              .toolbar { display: none; }
+              .page { width: auto; min-height: auto; margin: 0; padding: 12mm; }
+              @page { size: A4; margin: 8mm; }
+            }
           </style>
         </head>
         <body>
           <div class="toolbar">
-            <button class="close-btn" onclick="window.close()">Close</button>
-            <button class="print-btn" onclick="window.print()">Print / Save PDF</button>
+            <button onclick="window.close()">Close</button>
+            <button class="print" onclick="window.print()">Print / Save PDF</button>
           </div>
-          <section class="invoice-page">
-            <div class="header">
-              <div>
-                <img class="logo" src="/tumul-logo.png" alt="Tumul Legal Logo" />
-                <div class="firm-name">TUMUL LEGAL</div>
-                <p class="tagline">Excellence, Experience, Integrity</p>
+
+          <main class="page">
+            <header class="header">
+              <div class="brand">
+                <img src="/tumul-logo.png" alt="Tumul Legal" />
+                <div>
+                  <h1>TUMUL LEGAL</h1>
+                  <p>Excellence, Experience, Integrity</p>
+                </div>
               </div>
-              <div class="address">
+              <div class="firm">
                 <strong>P.O. Box 5856</strong><br/>
-                Boroko<br/>
-                National Capital District<br/>
+                Boroko, National Capital District<br/>
                 Papua New Guinea<br/><br/>
-                <strong>Physical Address</strong><br/>
                 Level 2, Suite 3, Waigani Haus<br/>
                 Section 31, Allotment 5<br/>
-                Mokoraha Road, Waigani, NCD<br/><br/>
+                Mokoraha Road, Waigani, NCD<br/>
                 Phone: +675 78993998<br/>
                 Email: mek@tumullegal.com
               </div>
-            </div>
-            <div class="title-row">
-              <div><h1>INVOICE</h1><div class="subtitle">Professional legal services</div></div>
-              <div class="invoice-box">
-                <div><strong>Invoice No:</strong> ${invoice.invoice_no || "N/A"}</div>
-                <div><strong>Invoice Date:</strong> ${invoiceDate}</div>
-                <div><strong>Due Date:</strong> ${dueDate}</div>
-                <div><strong>Status:</strong> <span class="status">${calculatedStatus}</span></div>
+            </header>
+
+            <section class="title">
+              <div>
+                <div class="eyebrow">Financial Document</div>
+                <h2>INVOICE ΓÇö ${escapeHtml(invoice.invoice_no || "N/A")}</h2>
+                <div class="subtitle">Professional Legal Services</div>
               </div>
-            </div>
-            <div class="details-grid">
-              <div class="detail-card"><p class="label">Bill To</p><p class="value">${invoice.client_name || "Client Name"}</p></div>
-              <div class="detail-card"><p class="label">Matter</p><p class="value">${invoice.matter_no || "Matter Number"}</p></div>
-            </div>
-            <table>
-              <thead><tr><th>Description</th><th class="right">Amount</th></tr></thead>
-              <tbody><tr><td>${description}</td><td class="right"><strong>${currency(amount)}</strong></td></tr></tbody>
-            </table>
-            <div class="totals"><div class="total-box">
-              <div class="total-row"><span>Subtotal</span><strong>${currency(amount)}</strong></div>
-              <div class="total-row"><span>Amount Paid</span><strong>${currency(amountPaid)}</strong></div>
-              <div class="total-row"><span>Balance</span><span>${currency(balance)}</span></div>
-            </div></div>
-            <div class="notes"><strong>Notes</strong><br/>Thank you for choosing Tumul Legal. This invoice was generated from the Tumul Legal Management System.</div>
-          </section>
+              <div class="status-box">
+                <strong>Issued:</strong> ${escapeHtml(invoiceDate)}<br/>
+                <strong>Due:</strong> ${escapeHtml(dueDate)}<br/>
+                <strong>Status:</strong> <span class="status">${escapeHtml(calculatedStatus)}</span>
+              </div>
+            </section>
+
+            <section class="grid">
+              <div class="card"><div class="label">Bill To</div><div class="value">${escapeHtml(invoice.client_name || "Client Name")}</div></div>
+              <div class="card"><div class="label">Matter</div><div class="value">${escapeHtml(invoice.matter_no || "Matter Number")}</div></div>
+            </section>
+
+            <section class="section">
+              <h3>Professional Fees</h3>
+              <table>
+                <thead><tr><th>Description</th><th class="right">Amount</th></tr></thead>
+                <tbody><tr><td>${escapeHtml(description)}</td><td class="right"><strong>${escapeHtml(currency(amount))}</strong></td></tr></tbody>
+              </table>
+              <div class="totals">
+                <div class="total-row"><span>Invoice Total</span><strong>${escapeHtml(currency(amount))}</strong></div>
+                <div class="total-row"><span>Amount Paid</span><strong>${escapeHtml(currency(amountPaid))}</strong></div>
+                <div class="total-row"><span>Balance Due</span><span>${escapeHtml(currency(balance))}</span></div>
+              </div>
+            </section>
+
+            <section class="section">
+              <h3>Document Note</h3>
+              <div class="notice">Thank you for choosing Tumul Legal. This invoice is an official financial document generated from the Tumul Legal Management System.</div>
+            </section>
+
+            <footer class="footer">
+              <span>Tumul Legal ΓÇó Financial Document ΓÇó Generated by Tumul Legal Management System</span>
+              <span>Printed by: ${escapeHtml(currentUserProfile.name || currentEmail || "Authorized User")} ΓÇó ${escapeHtml(generatedAt)}</span>
+            </footer>
+          </main>
         </body>
       </html>
     `;
 
-    const printWindow = window.open("", "_blank", "width=950,height=1100");
+    const printWindow = window.open("", "_blank", "width=1000,height=1100");
     if (!printWindow) {
       alert("Popup blocked. Please allow popups and try again.");
       return;
@@ -1416,6 +2125,32 @@ export default function TumulLegalV4() {
       "Billing"
     );
     await loadAllData();
+  };
+
+  const handleDeleteInvoice = async (invoice: Invoice) => {
+    if (currentUserProfile.role !== "Super Admin") {
+      alert("Only Super Admin can delete invoices.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete invoice ${invoice.invoice_no}?\n\nThis action cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    const { error } = await supabase
+      .from("invoices")
+      .delete()
+      .eq("id", invoice.id);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    logActivity(`Deleted invoice ${invoice.invoice_no}`, "Billing");
+    await loadAllData();
+    alert(`Invoice ${invoice.invoice_no} deleted successfully.`);
   };
 
   const handleDeleteMatter = async (matter: Matter) => {
@@ -1466,7 +2201,7 @@ export default function TumulLegalV4() {
       case "In Progress":
       case "In Court":
       case "Part Paid":
-        return "bg-sky-400/15 text-sky-200 border border-sky-400/30";
+        return "bg-[#d4af37]/12 text-[#f2d675] border border-[#d4af37]/30";
       case "Paid":
       case "Closed":
         return "bg-emerald-400/15 text-emerald-200 border border-emerald-400/30";
@@ -1494,9 +2229,9 @@ export default function TumulLegalV4() {
   const getRoleClass = (role: UserRole) => {
     switch (role) {
       case "Super Admin":
-        return "bg-cyan-400/15 text-cyan-200 border border-cyan-400/30";
+        return "bg-[#d4af37]/15 text-[#f6e7a8] border border-[#d4af37]/35";
       case "Lawyer":
-        return "bg-blue-400/15 text-blue-200 border border-blue-400/30";
+        return "bg-emerald-400/12 text-emerald-200 border border-emerald-400/25";
       case "Secretary":
         return "bg-violet-400/15 text-violet-200 border border-violet-400/30";
       case "Billing":
@@ -1531,7 +2266,7 @@ export default function TumulLegalV4() {
   const glassCard =
     "rounded-3xl border border-white/10 bg-white/5 backdrop-blur-xl shadow-[0_10px_40px_rgba(0,0,0,0.25)]";
   const inputClass =
-    "w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder:text-slate-400 outline-none transition focus:border-cyan-400/60 focus:bg-white/10";
+    "w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder:text-slate-400 outline-none transition focus:border-[#d4af37]/70 focus:bg-white/10";
   const sectionTitle = "text-lg font-semibold text-white";
   const muted = "text-sm text-slate-400";
   const buttonClass =
@@ -1539,7 +2274,7 @@ export default function TumulLegalV4() {
   const secondaryButton =
     `${buttonClass} border border-white/10 bg-white/5 text-white hover:bg-white/10`;
   const primaryButton =
-    `${buttonClass} bg-gradient-to-r from-cyan-400 to-blue-500 text-slate-950`;
+    `${buttonClass} bg-gradient-to-r from-[#d4af37] to-[#f2d675] text-slate-950`;
 
   const NavButton = ({
     id,
@@ -1557,7 +2292,7 @@ export default function TumulLegalV4() {
         onClick={() => setActiveTab(id)}
         className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-semibold transition ${
           activeTab === id
-            ? "bg-gradient-to-r from-cyan-400 to-blue-500 text-slate-950 shadow-lg"
+            ? "bg-gradient-to-r from-[#d4af37] to-[#f2d675] text-slate-950 shadow-lg"
             : "bg-white/5 text-slate-200 hover:bg-white/10"
         }`}
       >
@@ -1585,7 +2320,7 @@ export default function TumulLegalV4() {
     </div>
   );
 
-  if (loading) {
+  if (loading || (session && !accessVerified)) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-950 text-white">
         Loading Tumul Legal V4...
@@ -1603,7 +2338,7 @@ export default function TumulLegalV4() {
                 {branding.platformName || "MTEC"}
               </p>
               <h1 className="mt-2 text-3xl font-bold tracking-tight text-white">
-                MTEC – {branding.clientName || "Tumul Legal"}
+                MTEC ΓÇô {branding.clientName || "Tumul Legal"}
               </h1>
               <p className="mt-2 text-base text-slate-300">
                 Legal Management System
@@ -1643,7 +2378,7 @@ export default function TumulLegalV4() {
               </div>
 
               {authMessage && (
-                <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/10 px-4 py-3 text-sm text-cyan-200">
+                <div className="rounded-2xl border border-[#d4af37]/25 bg-[#d4af37]/10 px-4 py-3 text-sm text-[#f6e7a8]">
                   {authMessage}
                 </div>
               )}
@@ -1651,9 +2386,13 @@ export default function TumulLegalV4() {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full rounded-2xl bg-gradient-to-r from-cyan-400 to-blue-500 px-4 py-3 font-semibold text-slate-950 transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-70"
+                className="w-full rounded-2xl bg-gradient-to-r from-[#d4af37] to-[#f2d675] px-4 py-3 font-semibold text-slate-950 transition hover:scale-[1.01] disabled:cursor-not-allowed disabled:opacity-70"
               >
-                {loading ? "Please wait..." : "Login to System"}
+                {loading
+                  ? "Please wait..."
+                  : true
+                  ? "Login to System"
+                  : "Create Account"}
               </button>
             </form>
           </div>
@@ -1663,11 +2402,16 @@ export default function TumulLegalV4() {
   }
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(34,211,238,0.16),_transparent_25%),radial-gradient(circle_at_top_right,_rgba(59,130,246,0.14),_transparent_22%),linear-gradient(160deg,#020617_0%,#0f172a_42%,#111827_100%)] text-white">
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(212,175,55,0.10),_transparent_24%),radial-gradient(circle_at_top_right,_rgba(16,74,61,0.28),_transparent_26%),linear-gradient(160deg,#03130f_0%,#071d18_42%,#0b211c_100%)] text-white">
       <div className="flex min-h-screen flex-col lg:flex-row">
-        <aside className="w-full border-b border-white/10 bg-slate-950/60 px-4 py-5 backdrop-blur-xl lg:w-80 lg:border-b-0 lg:border-r">
+        <aside className="w-full border-b border-white/10 bg-[#041712]/90 px-4 py-5 backdrop-blur-xl lg:w-80 lg:border-b-0 lg:border-r">
           <div className="mb-6 px-2">
-            <p className="text-xs font-semibold uppercase tracking-[0.35em] text-cyan-300/80">
+            <img
+              src="/tumul-logo.png"
+              alt="Tumul Legal Logo"
+              className="mb-4 h-16 w-auto max-w-[220px] object-contain object-left"
+            />
+            <p className="text-xs font-semibold uppercase tracking-[0.35em] text-[#d4af37]">
               {branding.platformName || "MTEC"}
             </p>
             <h1 className="mt-3 text-3xl font-bold text-white">
@@ -1701,13 +2445,13 @@ export default function TumulLegalV4() {
 
           <div className={`${glassCard} mb-6 p-3 no-print`}>
             <nav className="space-y-2">
-              <NavButton id="dashboard" label="Dashboard" icon="◫" />
-              <NavButton id="docket" label="Case Docket" icon="⚖" />
-              <NavButton id="clients" label="Clients" icon="👥" />
-              <NavButton id="billing" label="Billing" icon="🧾" />
-              <NavButton id="reports" label="Reports" icon="📊" />
-              <NavButton id="users" label="Users & Roles" icon="🔐" />
-              <NavButton id="activity" label="Activity Log" icon="📝" />
+              <NavButton id="dashboard" label="Dashboard" icon="Γù½" />
+              <NavButton id="docket" label="Case Docket" icon="ΓÜû" />
+              <NavButton id="clients" label="Clients" icon="≡ƒæÑ" />
+              <NavButton id="billing" label="Billing" icon="≡ƒº╛" />
+              <NavButton id="reports" label="Reports" icon="≡ƒôè" />
+              <NavButton id="users" label="Users & Roles" icon="≡ƒöÉ" />
+              <NavButton id="activity" label="Activity Log" icon="≡ƒô¥" />
             </nav>
           </div>
 
@@ -1741,7 +2485,7 @@ export default function TumulLegalV4() {
               {permissions.seeFinancials && (
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-slate-300">Outstanding</span>
-                  <span className="text-sm font-bold text-cyan-300">
+                  <span className="text-sm font-bold text-[#f2d675]">
                     {currency(outstandingValue)}
                   </span>
                 </div>
@@ -1759,10 +2503,32 @@ export default function TumulLegalV4() {
 
         <main className="flex-1 p-4 sm:p-6 lg:p-8">
           <div id="print-root" data-print-section={printSection || activeTab}>
+          <div className="official-print-header">
+            <div className="official-print-brand">
+              <div className="official-print-brand-left">
+                <img src="/tumul-logo.png" alt="Tumul Legal" />
+                <div>
+                  <h1>TUMUL LEGAL</h1>
+                  <p>Excellence, Experience, Integrity</p>
+                </div>
+              </div>
+              <div className="official-print-firm">
+                <strong>P.O. Box 5856</strong><br />
+                Boroko, National Capital District, Papua New Guinea<br />
+                Level 2, Suite 3, Waigani Haus, Mokoraha Road, Waigani, NCD<br />
+                Phone: +675 78993998 ΓÇó Email: mek@tumullegal.com
+              </div>
+            </div>
+            <div className="official-print-title">
+              <div className="official-print-eyebrow">{officialPrintMeta.classification}</div>
+              <h2>{officialPrintMeta.title}</h2>
+              <p>Generated from the Tumul Legal Management System</p>
+            </div>
+          </div>
           <div className={`${glassCard} mb-6 overflow-hidden no-print`}>
             <div className="flex flex-col gap-5 p-6 lg:flex-row lg:items-center lg:justify-between">
               <div>
-                <p className="text-sm font-medium text-cyan-300/80">
+                <p className="text-sm font-medium text-[#d4af37]">
                   Welcome to {branding.clientName || "Tumul Legal"}
                 </p>
                 <h2 className="mt-1 text-3xl font-bold text-white">
@@ -1940,7 +2706,7 @@ export default function TumulLegalV4() {
                           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                             <div>
                               <div className="flex flex-wrap items-center gap-2">
-                                <p className="text-sm font-semibold text-cyan-200">{deadline.matter_no}</p>
+                                <p className="text-sm font-semibold text-[#f6e7a8]">{deadline.matter_no}</p>
                                 <span className={`inline-flex rounded-full px-3 py-1 text-[11px] font-semibold ${getDeadlineBadgeClass(deadline.state)}`}>
                                   {deadline.state}
                                 </span>
@@ -2197,7 +2963,7 @@ export default function TumulLegalV4() {
                                 onClick={() => openMatterFile(matter)}
                                 className="text-left"
                               >
-                                <div className="font-semibold text-cyan-300 hover:text-cyan-200">
+                                <div className="font-semibold text-[#f2d675] hover:text-[#f6e7a8]">
                                   {matter.matter_no}
                                 </div>
                                 <div className="mt-1 text-xs text-slate-400">
@@ -2248,7 +3014,7 @@ export default function TumulLegalV4() {
                               <div className="flex gap-2">
                                 <button
                                   onClick={() => openMatterFile(matter)}
-                                  className="rounded-2xl px-4 py-2 text-xs font-semibold transition border border-cyan-400/30 bg-cyan-400/10 text-cyan-200 hover:bg-cyan-400/20"
+                                  className="rounded-2xl px-4 py-2 text-xs font-semibold transition border border-[#d4af37]/35 bg-[#d4af37]/10 text-[#f6e7a8] hover:bg-[#d4af37]/20"
                                 >
                                   Open
                                 </button>
@@ -2279,320 +3045,279 @@ export default function TumulLegalV4() {
 
                 {isMatterPanelOpen && selectedMatter && (
                   <div className={`${glassCard} p-5`}>
-                    <div className="mb-5 flex flex-col gap-3 border-b border-white/10 pb-5 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="mb-5 flex flex-col gap-4 border-b border-white/10 pb-5 lg:flex-row lg:items-start lg:justify-between">
                       <div>
-                        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-300/80">
-                          Case File
-                        </p>
+                        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#d4af37]">Digital Case File</p>
                         <h3 className="mt-2 text-2xl font-bold text-white">
-                          {selectedMatter.matter_no}
+                          {selectedMatter.matter_no} ΓÇö {selectedMatter.case_type || "Legal Matter"}
                         </h3>
                         <p className="mt-2 text-sm text-slate-400">
-                          Full matter details, summary and next legal action.
+                          {selectedMatter.client_name} ΓÇó Assigned to {selectedMatter.assigned_lawyer || "Not assigned"}
                         </p>
                       </div>
-
                       <div className="flex flex-wrap gap-2">
-                        <span
-                          className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getStatusClass(
-                            selectedMatter.status
-                          )}`}
-                        >
-                          {selectedMatter.status}
-                        </span>
-                        <span
-                          className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getPriorityClass(
-                            selectedMatter.priority
-                          )}`}
-                        >
-                          {selectedMatter.priority}
-                        </span>
-                        <button
-                          onClick={closeMatterFile}
-                          className={secondaryButton}
-                        >
-                          Close
-                        </button>
+                        <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getStatusClass(selectedMatter.status)}`}>{selectedMatter.status}</span>
+                        <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getPriorityClass(selectedMatter.priority)}`}>{selectedMatter.priority}</span>
+                        {permissions.printData && (
+                          <button onClick={handlePrintCaseFile} className={primaryButton}>
+                            Print Case File
+                          </button>
+                        )}
+                        <button onClick={closeMatterFile} className={secondaryButton}>Close</button>
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-                      <div>
-                        <label className="mb-2 block text-sm text-slate-300">
-                          Matter Number
-                        </label>
-                        <input
-                          value={selectedMatter.matter_no}
-                          onChange={(e) =>
-                            updateSelectedMatterField("matter_no", e.target.value)
-                          }
-                          className={inputClass}
-                          disabled={!canEditMatterDetails}
-                        />
-                      </div>
-                      <div>
-                        <label className="mb-2 block text-sm text-slate-300">
-                          Client Name
-                        </label>
-                        <input
-                          value={selectedMatter.client_name}
-                          onChange={(e) =>
-                            updateSelectedMatterField("client_name", e.target.value)
-                          }
-                          className={inputClass}
-                          disabled={!canEditMatterDetails}
-                        />
-                      </div>
-                      <div>
-                        <label className="mb-2 block text-sm text-slate-300">
-                          Case Type
-                        </label>
-                        <input
-                          value={selectedMatter.case_type}
-                          onChange={(e) =>
-                            updateSelectedMatterField("case_type", e.target.value)
-                          }
-                          className={inputClass}
-                          disabled={!canEditMatterDetails}
-                        />
-                      </div>
-                      <div>
-                        <label className="mb-2 block text-sm text-slate-300">
-                          Assigned Lawyer
-                        </label>
-                        <input
-                          value={selectedMatter.assigned_lawyer}
-                          onChange={(e) =>
-                            updateSelectedMatterField("assigned_lawyer", e.target.value)
-                          }
-                          className={inputClass}
-                          disabled={!canEditMatterDetails}
-                        />
-                      </div>
-                      <div>
-                        <label className="mb-2 block text-sm text-slate-300">
-                          Status
-                        </label>
-                        <select
-                          value={selectedMatter.status}
-                          onChange={(e) =>
-                            updateSelectedMatterField("status", e.target.value as MatterStatus)
-                          }
-                          className={inputClass}
-                          disabled={!canEditMatterDetails}
-                        >
-                          <option className="bg-slate-900">Open</option>
-                          <option className="bg-slate-900">In Progress</option>
-                          <option className="bg-slate-900">Pending Filing</option>
-                          <option className="bg-slate-900">In Court</option>
-                          <option className="bg-slate-900">Awaiting Client</option>
-                          <option className="bg-slate-900">Closed</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="mb-2 block text-sm text-slate-300">
-                          Priority
-                        </label>
-                        <select
-                          value={selectedMatter.priority}
-                          onChange={(e) =>
-                            updateSelectedMatterField("priority", e.target.value as Priority)
-                          }
-                          className={inputClass}
-                          disabled={!canEditMatterDetails}
-                        >
-                          <option className="bg-slate-900">High</option>
-                          <option className="bg-slate-900">Medium</option>
-                          <option className="bg-slate-900">Low</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="mb-2 block text-sm text-slate-300">
-                          Court Date
-                        </label>
-                        <input
-                          type="date"
-                          value={selectedMatter.court_date || ""}
-                          onChange={(e) =>
-                            updateSelectedMatterField("court_date", e.target.value)
-                          }
-                          className={inputClass}
-                          disabled={!canEditMatterDetails}
-                        />
-                      </div>
-                      <div>
-                        <label className="mb-2 block text-sm text-slate-300">
-                          Estimated Cost
-                        </label>
-                        <input
-                          type="number"
-                          value={selectedMatter.cost_estimate || 0}
-                          onChange={(e) =>
-                            updateSelectedMatterField(
-                              "cost_estimate",
-                              Number(e.target.value || 0)
-                            )
-                          }
-                          className={inputClass}
-                          disabled={!canEditMatterDetails}
-                        />
-                      </div>
-                      <div className="xl:col-span-2">
-                        <label className="mb-2 block text-sm text-slate-300">
-                          Next Legal Step
-                        </label>
-                        <input
-                          value={selectedMatter.next_step || ""}
-                          onChange={(e) =>
-                            updateSelectedMatterField("next_step", e.target.value)
-                          }
-                          className={inputClass}
-                          disabled={!canEditMatterDetails}
-                        />
-                      </div>
-                      <div className="xl:col-span-2">
-                        <label className="mb-2 block text-sm text-slate-300">
-                          Case Summary
-                        </label>
-                        <textarea
-                          value={selectedMatter.summary || ""}
-                          onChange={(e) =>
-                            updateSelectedMatterField("summary", e.target.value)
-                          }
-                          className={`${inputClass} min-h-[180px] resize-y`}
-                          disabled={!canEditMatterDetails}
-                        />
-                      </div>
+                    <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+                      {([
+                        ["overview", "Overview"], ["tasks", "Tasks & Deadlines"], ["notes", "Notes & History"],
+                        ["documents", "Documents"], ["billing", "Billing"], ["activity", "Activity"]
+                      ] as [MatterFileTab, string][]).map(([id, label]) => (
+                        <button key={id} onClick={() => setMatterFileTab(id)} className={matterFileTab === id ? primaryButton : secondaryButton}>{label}</button>
+                      ))}
                     </div>
 
-                    <div className="mt-6 rounded-3xl border border-white/10 bg-white/5 p-5">
-                      <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                        <div>
-                          <h4 className="text-lg font-semibold text-white">
-                            Matter Deadlines
-                          </h4>
-                          <p className="text-sm text-slate-400">
-                            Track filings, hearings, submissions and urgent follow-up dates.
-                          </p>
+                    {matterFileTab === "overview" && (
+                      <div className="space-y-6">
+                        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+                          <div className="rounded-2xl border border-white/10 bg-white/5 p-4"><p className="text-xs uppercase tracking-wider text-slate-400">Client</p><p className="mt-2 font-semibold text-white">{selectedMatter.client_name || "Not set"}</p></div>
+                          <div className="rounded-2xl border border-white/10 bg-white/5 p-4"><p className="text-xs uppercase tracking-wider text-slate-400">Assigned Lawyer</p><p className="mt-2 font-semibold text-white">{selectedMatter.assigned_lawyer || "Not assigned"}</p></div>
+                          <div className="rounded-2xl border border-white/10 bg-white/5 p-4"><p className="text-xs uppercase tracking-wider text-slate-400">Next Court Date</p><p className="mt-2 font-semibold text-white">{selectedMatter.court_date ? normalizeDateOnly(selectedMatter.court_date) : "Not scheduled"}</p></div>
+                          <div className="rounded-2xl border border-white/10 bg-white/5 p-4"><p className="text-xs uppercase tracking-wider text-slate-400">Estimated Cost</p><p className="mt-2 font-semibold text-white">{currency(Number(selectedMatter.cost_estimate || 0))}</p></div>
                         </div>
-                        <div className="text-sm text-slate-400">
-                          Total: {matterDeadlines.length}
+
+                        <div className="rounded-2xl border border-[#d4af37]/25 bg-[#d4af37]/5 p-5">
+                          <p className="text-xs uppercase tracking-[0.18em] text-[#f2d675]">Next Legal Action</p>
+                          <p className="mt-2 text-lg font-semibold text-white">{selectedMatter.next_step || "No next legal action recorded."}</p>
                         </div>
-                      </div>
 
-                      <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1.2fr_180px_1fr_auto]">
-                        <input
-                          value={deadlineForm.title}
-                          onChange={(e) =>
-                            setDeadlineForm({ ...deadlineForm, title: e.target.value })
-                          }
-                          placeholder="Deadline title"
-                          className={inputClass}
-                          disabled={!canEditMatterDetails}
-                        />
-                        <input
-                          type="date"
-                          value={deadlineForm.deadline_date}
-                          onChange={(e) =>
-                            setDeadlineForm({
-                              ...deadlineForm,
-                              deadline_date: e.target.value,
-                            })
-                          }
-                          className={inputClass}
-                          disabled={!canEditMatterDetails}
-                        />
-                        <input
-                          value={deadlineForm.notes}
-                          onChange={(e) =>
-                            setDeadlineForm({ ...deadlineForm, notes: e.target.value })
-                          }
-                          placeholder="Notes (optional)"
-                          className={inputClass}
-                          disabled={!canEditMatterDetails}
-                        />
-                        <button
-                          onClick={handleAddDeadline}
-                          disabled={!canEditMatterDetails || isSavingDeadline}
-                          className={canEditMatterDetails ? primaryButton : secondaryButton}
-                        >
-                          {isSavingDeadline ? "Saving..." : "Add Deadline"}
-                        </button>
-                      </div>
+                        <div className="flex justify-end">
+                          {canEditMatterDetails && !isEditingMatter && <button onClick={() => setIsEditingMatter(true)} className={primaryButton}>Edit Matter Details</button>}
+                        </div>
 
-                      <div className="mt-5 space-y-3">
-                        {matterDeadlines.length === 0 && (
-                          <div className="rounded-2xl border border-dashed border-white/10 px-4 py-6 text-sm text-slate-400">
-                            No deadlines added for this matter yet.
+                        {isEditingMatter ? (
+                          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+                            <div><label className="mb-2 block text-sm text-slate-300">Matter Number</label><input value={selectedMatter.matter_no} onChange={(e) => updateSelectedMatterField("matter_no", e.target.value)} className={inputClass}/></div>
+                            <div><label className="mb-2 block text-sm text-slate-300">Client Name</label><input value={selectedMatter.client_name} onChange={(e) => updateSelectedMatterField("client_name", e.target.value)} className={inputClass}/></div>
+                            <div><label className="mb-2 block text-sm text-slate-300">Case Type</label><input value={selectedMatter.case_type} onChange={(e) => updateSelectedMatterField("case_type", e.target.value)} className={inputClass}/></div>
+                            <div><label className="mb-2 block text-sm text-slate-300">Assigned Lawyer</label><input value={selectedMatter.assigned_lawyer} onChange={(e) => updateSelectedMatterField("assigned_lawyer", e.target.value)} className={inputClass}/></div>
+                            <div><label className="mb-2 block text-sm text-slate-300">Status</label><select value={selectedMatter.status} onChange={(e) => updateSelectedMatterField("status", e.target.value as MatterStatus)} className={inputClass}>{["Open","In Progress","Pending Filing","In Court","Awaiting Client","Closed"].map(x=><option key={x} className="bg-slate-900">{x}</option>)}</select></div>
+                            <div><label className="mb-2 block text-sm text-slate-300">Priority</label><select value={selectedMatter.priority} onChange={(e) => updateSelectedMatterField("priority", e.target.value as Priority)} className={inputClass}>{["High","Medium","Low"].map(x=><option key={x} className="bg-slate-900">{x}</option>)}</select></div>
+                            <div><label className="mb-2 block text-sm text-slate-300">Court Date</label><input type="date" value={selectedMatter.court_date || ""} onChange={(e) => updateSelectedMatterField("court_date", e.target.value)} className={inputClass}/></div>
+                            <div><label className="mb-2 block text-sm text-slate-300">Estimated Cost</label><input type="number" value={selectedMatter.cost_estimate || 0} onChange={(e) => updateSelectedMatterField("cost_estimate", Number(e.target.value || 0))} className={inputClass}/></div>
+                            <div className="xl:col-span-2"><label className="mb-2 block text-sm text-slate-300">Next Legal Action</label><input value={selectedMatter.next_step || ""} onChange={(e) => updateSelectedMatterField("next_step", e.target.value)} placeholder="e.g. Prepare affidavit for filing" className={inputClass}/></div>
+                            <div className="xl:col-span-2"><label className="mb-2 block text-sm text-slate-300">Case Summary</label><textarea value={selectedMatter.summary || ""} onChange={(e) => updateSelectedMatterField("summary", e.target.value)} className={`${inputClass} min-h-[160px] resize-y`}/></div>
+                            <div className="xl:col-span-2 flex justify-end gap-3"><button onClick={() => setIsEditingMatter(false)} className={secondaryButton}>Cancel</button><button onClick={async () => { await handleSaveMatterDetails(); setIsEditingMatter(false); }} disabled={isSavingMatter} className={primaryButton}>{isSavingMatter ? "Saving..." : "Save Changes"}</button></div>
+                          </div>
+                        ) : (
+                          <div className="rounded-2xl border border-white/10 bg-white/5 p-5"><h4 className="font-semibold text-white">Case Summary</h4><p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-300">{selectedMatter.summary || "No case summary recorded."}</p></div>
+                        )}
+                      </div>
+                    )}
+
+                    {matterFileTab === "tasks" && (
+                      <div className="rounded-3xl border border-white/10 bg-white/5 p-5">
+                        <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><h4 className="text-lg font-semibold text-white">Tasks & Deadlines</h4><p className="text-sm text-slate-400">Track court appearances, filings, client follow-ups and other critical dates.</p></div><div className="text-sm text-slate-400">Total: {matterDeadlines.length}</div></div>
+                        <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1.2fr_180px_1fr_auto]"><input value={deadlineForm.title} onChange={(e)=>setDeadlineForm({...deadlineForm,title:e.target.value})} placeholder="Task / deadline title" className={inputClass} disabled={!canEditMatterDetails}/><input type="date" value={deadlineForm.deadline_date} onChange={(e)=>setDeadlineForm({...deadlineForm,deadline_date:e.target.value})} className={inputClass} disabled={!canEditMatterDetails}/><input value={deadlineForm.notes} onChange={(e)=>setDeadlineForm({...deadlineForm,notes:e.target.value})} placeholder="Notes or assigned person (optional)" className={inputClass} disabled={!canEditMatterDetails}/><button onClick={handleAddDeadline} disabled={!canEditMatterDetails || isSavingDeadline} className={canEditMatterDetails ? primaryButton : secondaryButton}>{isSavingDeadline ? "Saving..." : "Add Task"}</button></div>
+                        <div className="mt-5 space-y-3">{matterDeadlines.length===0 && <div className="rounded-2xl border border-dashed border-white/10 px-4 py-6 text-sm text-slate-400">No tasks or deadlines added for this matter yet.</div>}{matterDeadlines.map((deadline)=>{const deadlineState=getDeadlineState(deadline);return <div key={deadline.id} className="rounded-2xl border border-white/10 bg-slate-950/40 p-4"><div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between"><div><div className="flex flex-wrap items-center gap-2"><p className="text-base font-semibold text-white">{deadline.title}</p><span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getDeadlineBadgeClass(deadlineState)}`}>{deadlineState}</span></div><p className="mt-2 text-sm text-slate-300">Due: {normalizeDateOnly(deadline.deadline_date)}</p><p className="mt-1 text-sm text-slate-400">{deadline.notes || "No notes"}</p></div><div className="flex flex-wrap gap-2"><button onClick={()=>handleToggleDeadlineComplete(deadline)} className="rounded-2xl border border-emerald-400/30 bg-emerald-400/10 px-4 py-2 text-xs font-semibold text-emerald-200">{deadline.is_completed ? "Re-open" : "Mark Complete"}</button><button onClick={()=>handleDeleteDeadline(deadline)} className="rounded-2xl border border-rose-400/30 bg-rose-400/10 px-4 py-2 text-xs font-semibold text-rose-200">Remove</button></div></div></div>})}</div>
+                      </div>
+                    )}
+
+                    {matterFileTab === "notes" && (
+                      <div className="rounded-3xl border border-white/10 bg-white/5 p-6">
+                        <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                          <div>
+                            <h4 className="text-lg font-semibold text-white">Notes & History</h4>
+                            <p className="text-sm text-slate-400">Record timestamped legal notes and matter history.</p>
+                          </div>
+                          <div className="text-sm text-slate-400">Total: {matterNotes.length}</div>
+                        </div>
+
+                        {canEditMatterDetails && (
+                          <div className="rounded-2xl border border-[#d4af37]/20 bg-[#d4af37]/5 p-4">
+                            <label className="mb-2 block text-sm font-semibold text-slate-200">Add Case Note</label>
+                            <textarea
+                              value={noteText}
+                              onChange={(e) => setNoteText(e.target.value)}
+                              placeholder="Enter client conference notes, legal updates, instructions received, filing history or other matter information..."
+                              className={`${inputClass} min-h-[140px] resize-y`}
+                            />
+                            <div className="mt-3 flex items-center justify-between gap-3">
+                              <p className="text-xs text-slate-400">
+                                Saved as {currentUserProfile.name} with the current date and time.
+                              </p>
+                              <button onClick={handleAddMatterNote} disabled={isSavingNote || !noteText.trim()} className={primaryButton}>
+                                {isSavingNote ? "Saving..." : "Save Note"}
+                              </button>
+                            </div>
                           </div>
                         )}
 
-                        {matterDeadlines.map((deadline) => {
-                          const deadlineState = getDeadlineState(deadline);
-
-                          return (
-                            <div
-                              key={deadline.id}
-                              className="rounded-2xl border border-white/10 bg-slate-950/40 p-4"
-                            >
-                              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                                <div>
+                        <div className="mt-5 space-y-3">
+                          {matterNotes.length === 0 && (
+                            <div className="rounded-2xl border border-dashed border-white/10 px-4 py-6 text-sm text-slate-400">
+                              No case notes have been recorded for this matter yet.
+                            </div>
+                          )}
+                          {matterNotes.map((note) => (
+                            <div key={note.id} className="rounded-2xl border border-white/10 bg-slate-950/40 p-4">
+                              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                <div className="min-w-0">
                                   <div className="flex flex-wrap items-center gap-2">
-                                    <p className="text-base font-semibold text-white">
-                                      {deadline.title}
-                                    </p>
-                                    <span
-                                      className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getDeadlineBadgeClass(
-                                        deadlineState
-                                      )}`}
-                                    >
-                                      {deadlineState}
-                                    </span>
+                                    <p className="font-semibold text-white">{note.created_by}</p>
+                                    <span className="text-xs text-slate-500">{new Date(note.created_at).toLocaleString("en-PG")}</span>
                                   </div>
-                                  <p className="mt-2 text-sm text-slate-300">
-                                    Due: {normalizeDateOnly(deadline.deadline_date)}
-                                  </p>
-                                  <p className="mt-1 text-sm text-slate-400">
-                                    {deadline.notes || "No notes"}
-                                  </p>
+                                  <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-300">{note.note}</p>
                                 </div>
-
-                                <div className="flex flex-wrap gap-2">
-                                  <button
-                                    onClick={() => handleToggleDeadlineComplete(deadline)}
-                                    className="rounded-2xl px-4 py-2 text-xs font-semibold transition border border-emerald-400/30 bg-emerald-400/10 text-emerald-200 hover:bg-emerald-400/20"
-                                  >
-                                    {deadline.is_completed ? "Mark Open" : "Mark Complete"}
-                                  </button>
-                                  <button
-                                    onClick={() => handleDeleteDeadline(deadline)}
-                                    className="rounded-2xl px-4 py-2 text-xs font-semibold transition border border-rose-400/30 bg-rose-400/10 text-rose-200 hover:bg-rose-400/20"
-                                  >
+                                {currentUserProfile.role === "Super Admin" && (
+                                  <button onClick={() => handleDeleteMatterNote(note)} className="shrink-0 rounded-2xl border border-rose-400/30 bg-rose-400/10 px-4 py-2 text-xs font-semibold text-rose-200 hover:bg-rose-400/20">
                                     Delete
                                   </button>
-                                </div>
+                                )}
                               </div>
                             </div>
-                          );
-                        })}
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {matterFileTab === "documents" && (
+                    <div className="space-y-4">
+                      <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+                        <div className="mb-4">
+                          <h3 className="text-lg font-semibold text-white">Case Documents</h3>
+                          <p className="mt-1 text-sm text-slate-400">
+                            Securely upload and manage files linked to this legal matter.
+                          </p>
+                        </div>
+
+                        {canEditMatterDetails && (
+                          <div className="rounded-2xl border border-[#d4af37]/25 bg-[#d4af37]/[0.04] p-4">
+                            <div className="mb-3 text-sm font-semibold text-white">
+                              Upload Case Document
+                            </div>
+                            <div className="grid gap-3 lg:grid-cols-2">
+                              <input
+                                value={documentTitle}
+                                onChange={(e) => setDocumentTitle(e.target.value)}
+                                placeholder="Document title"
+                                className="rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white outline-none placeholder:text-slate-500"
+                              />
+                              <select
+                                value={documentCategory}
+                                onChange={(e) => setDocumentCategory(e.target.value)}
+                                className="rounded-xl border border-white/10 bg-[#17352e] px-4 py-3 text-sm text-white outline-none"
+                              >
+                                <option>Client Correspondence</option>
+                                <option>Contract</option>
+                                <option>Court Document</option>
+                                <option>Evidence</option>
+                                <option>Legal Draft</option>
+                                <option>Other</option>
+                              </select>
+                            </div>
+
+                            <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-center">
+                              <input
+                                id="matter-document-file"
+                                type="file"
+                                onChange={(e) => setDocumentFile(e.target.files?.[0] || null)}
+                                className="min-w-0 flex-1 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-slate-300 file:mr-4 file:rounded-lg file:border-0 file:bg-[#d4af37] file:px-3 file:py-2 file:font-semibold file:text-[#071d18]"
+                              />
+                              <button
+                                type="button"
+                                onClick={handleUploadMatterDocument}
+                                disabled={isUploadingDocument}
+                                className="rounded-xl bg-[#e7c449] px-5 py-3 text-sm font-bold text-[#071d18] disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {isUploadingDocument ? "Uploading..." : "Upload Document"}
+                              </button>
+                            </div>
+                            <p className="mt-2 text-xs text-slate-500">
+                              Files are stored in the private matter-documents storage bucket and linked to {selectedMatter?.matter_no}.
+                            </p>
+                          </div>
+                        )}
+
+                        <div className="mt-5 flex items-center justify-between">
+                          <div>
+                            <div className="font-semibold text-white">Stored Documents</div>
+                            <div className="text-xs text-slate-500">
+                              Files attached to this matter
+                            </div>
+                          </div>
+                          <div className="text-sm text-slate-400">Total: {matterDocuments.length}</div>
+                        </div>
+
+                        <div className="mt-3 space-y-3">
+                          {matterDocuments.length === 0 ? (
+                            <div className="rounded-xl border border-dashed border-white/10 p-5 text-sm text-slate-500">
+                              No documents uploaded for this matter yet.
+                            </div>
+                          ) : (
+                            matterDocuments.map((documentItem) => (
+                              <div
+                                key={documentItem.id}
+                                className="rounded-2xl border border-white/10 bg-[#102720] p-4"
+                              >
+                                <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+                                  <div className="min-w-0">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <div className="font-semibold text-white">
+                                        {documentItem.document_name}
+                                      </div>
+                                      <span className="rounded-full border border-[#d4af37]/30 bg-[#d4af37]/10 px-2 py-1 text-[10px] font-semibold text-[#f2d675]">
+                                        {documentItem.category || "General"}
+                                      </span>
+                                    </div>
+                                    <div className="mt-2 break-all text-xs text-slate-400">
+                                      {documentItem.file_name} ΓÇó {formatFileSize(documentItem.file_size)}
+                                    </div>
+                                    <div className="mt-1 text-xs text-slate-500">
+                                      Uploaded by {documentItem.uploaded_by || "Unknown User"}
+                                      {documentItem.created_at
+                                        ? ` ΓÇó ${new Date(documentItem.created_at).toLocaleString("en-PG")}`
+                                        : ""}
+                                    </div>
+                                  </div>
+
+                                  <div className="flex flex-wrap gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenMatterDocument(documentItem)}
+                                      className="rounded-xl border border-emerald-400/30 bg-emerald-400/10 px-4 py-2 text-xs font-semibold text-emerald-200"
+                                    >
+                                      View
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDownloadMatterDocument(documentItem)}
+                                      className="rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2 text-xs font-semibold text-white"
+                                    >
+                                      Download
+                                    </button>
+                                    {currentUserProfile.role === "Super Admin" && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeleteMatterDocument(documentItem)}
+                                        className="rounded-xl border border-rose-400/30 bg-rose-400/10 px-4 py-2 text-xs font-semibold text-rose-200"
+                                      >
+                                        Delete
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
                       </div>
                     </div>
+                  )}
 
-                    <div className="mt-5 flex flex-col gap-3 border-t border-white/10 pt-5 sm:flex-row sm:justify-end">
-                      <button
-                        onClick={closeMatterFile}
-                        className={secondaryButton}
-                      >
-                        Close File
-                      </button>
-                      <button
-                        onClick={handleSaveMatterDetails}
-                        disabled={!canEditMatterDetails || isSavingMatter}
-                        className={canEditMatterDetails ? primaryButton : secondaryButton}
-                      >
-                        {isSavingMatter ? "Saving..." : "Save Changes"}
-                      </button>
-                    </div>
+                  {matterFileTab === "billing" && <div className="rounded-3xl border border-white/10 bg-white/5 p-6"><div className="mb-4 flex items-center justify-between"><div><h4 className="text-lg font-semibold text-white">Matter Billing</h4><p className="text-sm text-slate-400">Invoices connected to {selectedMatter.matter_no}.</p></div></div><div className="space-y-3">{invoices.filter(i=>i.matter_no===selectedMatter.matter_no).map(i=><div key={i.id} className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-slate-950/40 p-4 md:flex-row md:items-center md:justify-between"><div><p className="font-semibold text-white">{i.invoice_no}</p><p className="text-sm text-slate-400">{i.service_description || "Legal service / professional fee"}</p></div><div className="text-left md:text-right"><p className="font-semibold text-white">{currency(Number(i.amount||0))}</p><span className={`mt-1 inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getStatusClass(i.status)}`}>{i.status}</span></div></div>)}{!invoices.some(i=>i.matter_no===selectedMatter.matter_no) && <p className="rounded-2xl border border-dashed border-white/10 p-5 text-sm text-slate-400">No invoices are linked to this matter.</p>}</div></div>}
+                    {matterFileTab === "activity" && <div className="rounded-3xl border border-white/10 bg-white/5 p-6"><h4 className="text-lg font-semibold text-white">Matter Activity</h4><p className="mt-1 text-sm text-slate-400">Recent recorded actions that reference {selectedMatter.matter_no}.</p><div className="mt-4 space-y-3">{activityLog.filter(a=>a.action.includes(selectedMatter.matter_no)).map(a=><div key={a.id} className="rounded-2xl border border-white/10 bg-slate-950/40 p-4"><p className="text-sm font-semibold text-white">{a.action}</p><p className="mt-1 text-xs text-slate-400">{a.actor} ΓÇó {a.role} ΓÇó {a.time}</p></div>)}{!activityLog.some(a=>a.action.includes(selectedMatter.matter_no)) && <p className="rounded-2xl border border-dashed border-white/10 p-5 text-sm text-slate-400">No matching activity recorded in this browser yet.</p>}</div></div>}
+                    {matterFileTab === "documents" ? null : null}
+
+                    <div className="mt-6 flex justify-end border-t border-white/10 pt-5"><button onClick={closeMatterFile} className={secondaryButton}>Close File</button></div>
                   </div>
                 )}
               </div>
@@ -2723,7 +3448,7 @@ export default function TumulLegalV4() {
                             {client.email}
                           </p>
                         </div>
-                        <span className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-xs font-semibold text-cyan-200">
+                        <span className="rounded-full border border-[#d4af37]/35 bg-[#d4af37]/10 px-3 py-1 text-xs font-semibold text-[#f6e7a8]">
                           {client.source}
                         </span>
                       </div>
@@ -2941,7 +3666,7 @@ export default function TumulLegalV4() {
                   </div>
                   <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
                     <p className="text-sm text-slate-400">Outstanding</p>
-                    <h4 className="mt-2 text-2xl font-bold text-cyan-300">
+                    <h4 className="mt-2 text-2xl font-bold text-[#f2d675]">
                       {currency(outstandingValue)}
                     </h4>
                   </div>
@@ -2995,7 +3720,7 @@ export default function TumulLegalV4() {
                           <td className="px-3 py-4 font-semibold text-emerald-300">
                             {currency(Number(invoice.amount_paid || 0))}
                           </td>
-                          <td className="px-3 py-4 font-semibold text-cyan-300">
+                          <td className="px-3 py-4 font-semibold text-[#f2d675]">
                             {currency(getInvoiceBalance(invoice))}
                           </td>
                           <td className="px-3 py-4">
@@ -3023,10 +3748,18 @@ export default function TumulLegalV4() {
                               </button>
                               <button
                                 onClick={() => handlePrintInvoice(invoice)}
-                                className="rounded-2xl border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-400/20"
+                                className="rounded-2xl border border-[#d4af37]/35 bg-[#d4af37]/10 px-4 py-2 text-xs font-semibold text-[#f6e7a8] transition hover:bg-[#d4af37]/20"
                               >
                                 Print / Save PDF
                               </button>
+                              {currentUserProfile.role === "Super Admin" && (
+                                <button
+                                  onClick={() => handleDeleteInvoice(invoice)}
+                                  className="rounded-2xl border border-rose-400/30 bg-rose-400/10 px-4 py-2 text-xs font-semibold text-rose-200 transition hover:bg-rose-400/20"
+                                >
+                                  Delete
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -3165,7 +3898,7 @@ export default function TumulLegalV4() {
                     </div>
                     <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
                       <p className="text-sm text-slate-400">Outstanding Value</p>
-                      <h4 className="mt-2 text-2xl font-bold text-cyan-300">
+                      <h4 className="mt-2 text-2xl font-bold text-[#f2d675]">
                         {currency(outstandingValue)}
                       </h4>
                     </div>
@@ -3195,7 +3928,7 @@ export default function TumulLegalV4() {
                         <div key={`report-client-${client.id}`} className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
                           <div>
                             <p className="font-semibold text-white">{client.name}</p>
-                            <p className="text-xs text-slate-400">{client.phone} • {client.email || "No email"}</p>
+                            <p className="text-xs text-slate-400">{client.phone} ΓÇó {client.email || "No email"}</p>
                           </div>
                           <button onClick={() => handleDeleteClient(client)} className="rounded-2xl px-4 py-2 text-xs font-semibold transition border border-rose-400/30 bg-rose-400/10 text-rose-200 hover:bg-rose-400/20">
                             Delete
@@ -3221,7 +3954,7 @@ export default function TumulLegalV4() {
                         <div key={`report-matter-${matter.id}`} className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
                           <div>
                             <p className="font-semibold text-white">{matter.matter_no}</p>
-                            <p className="text-xs text-slate-400">{matter.client_name} • {matter.status}</p>
+                            <p className="text-xs text-slate-400">{matter.client_name} ΓÇó {matter.status}</p>
                           </div>
                           <button onClick={() => handleDeleteMatter(matter)} className="rounded-2xl px-4 py-2 text-xs font-semibold transition border border-rose-400/30 bg-rose-400/10 text-rose-200 hover:bg-rose-400/20">
                             Delete
@@ -3281,7 +4014,7 @@ export default function TumulLegalV4() {
                   </button>
                 </div>
 
-                <div className="mt-5 rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-4 text-sm text-cyan-100">
+                <div className="mt-5 rounded-2xl border border-[#d4af37]/25 bg-[#d4af37]/10 p-4 text-sm text-[#fff1b8]">
                   Added users must sign up using the same email address to access the system.
                 </div>
               </div>
@@ -3419,7 +4152,7 @@ export default function TumulLegalV4() {
                               {item.actor}
                             </p>
                             <p className="text-xs text-slate-400">
-                              {item.role} • {item.time}
+                              {item.role} ΓÇó {item.time}
                             </p>
                           </div>
                         </div>
@@ -3430,9 +4163,35 @@ export default function TumulLegalV4() {
               </div>
             </div>
           )}
+          <div className="official-print-footer">
+            <span>Tumul Legal ΓÇó Official System Document</span>
+            <span>Printed by: {currentUserProfile.name || currentEmail || "Authorized User"} ΓÇó {new Date().toLocaleString("en-PG")}</span>
+          </div>
           </div>
 
           <style jsx global>{`
+            :root {
+              --tumul-green: #0b2b24;
+              --tumul-green-deep: #041712;
+              --tumul-gold: #d4af37;
+              --tumul-gold-light: #f2d675;
+            }
+
+            /* Tumul Legal brand polish */
+            ::selection {
+              background: rgba(212, 175, 55, 0.32);
+              color: #ffffff;
+            }
+
+            input:focus, textarea:focus, select:focus {
+              box-shadow: 0 0 0 1px rgba(212, 175, 55, 0.16);
+            }
+
+            .official-print-header,
+            .official-print-footer {
+              display: none;
+            }
+
             @media print {
               @page {
                 size: A4 portrait;
@@ -3441,6 +4200,93 @@ export default function TumulLegalV4() {
 
               html, body {
                 background: #ffffff !important;
+              }
+
+              body.printing-active .official-print-header,
+              body.printing-active .official-print-header *,
+              body.printing-active .official-print-footer,
+              body.printing-active .official-print-footer * {
+                visibility: visible !important;
+              }
+
+              body.printing-active .official-print-header {
+                display: block !important;
+                margin-bottom: 8mm !important;
+                color: #111827 !important;
+              }
+
+              body.printing-active .official-print-brand {
+                display: flex !important;
+                justify-content: space-between !important;
+                gap: 8mm !important;
+                padding-bottom: 5mm !important;
+                border-bottom: 3px solid #0b2b24 !important;
+              }
+
+              body.printing-active .official-print-brand-left {
+                display: flex !important;
+                align-items: center !important;
+                gap: 5mm !important;
+              }
+
+              body.printing-active .official-print-brand-left img {
+                width: 28mm !important;
+                height: auto !important;
+              }
+
+              body.printing-active .official-print-brand-left h1 {
+                margin: 0 !important;
+                color: #0b2b24 !important;
+                font-size: 20pt !important;
+              }
+
+              body.printing-active .official-print-brand-left p {
+                margin: 2mm 0 0 !important;
+                color: #9a7614 !important;
+                font-size: 9pt !important;
+                font-weight: 700 !important;
+              }
+
+              body.printing-active .official-print-firm {
+                text-align: right !important;
+                color: #475569 !important;
+                font-size: 7.5pt !important;
+                line-height: 1.45 !important;
+              }
+
+              body.printing-active .official-print-title {
+                margin: 7mm 0 6mm !important;
+              }
+
+              body.printing-active .official-print-eyebrow {
+                color: #9a7614 !important;
+                font-size: 7.5pt !important;
+                font-weight: 800 !important;
+                letter-spacing: .16em !important;
+                text-transform: uppercase !important;
+              }
+
+              body.printing-active .official-print-title h2 {
+                margin: 2mm 0 1mm !important;
+                color: #0f172a !important;
+                font-size: 20pt !important;
+              }
+
+              body.printing-active .official-print-title p {
+                margin: 0 !important;
+                color: #64748b !important;
+                font-size: 8pt !important;
+              }
+
+              body.printing-active .official-print-footer {
+                display: flex !important;
+                justify-content: space-between !important;
+                gap: 8mm !important;
+                margin-top: 8mm !important;
+                padding-top: 3mm !important;
+                border-top: 1px solid #d8dee6 !important;
+                color: #64748b !important;
+                font-size: 7pt !important;
               }
 
               body.printing-active * {
@@ -3495,8 +4341,8 @@ export default function TumulLegalV4() {
               body.printing-active #print-root .text-white,
               body.printing-active #print-root .text-slate-400,
               body.printing-active #print-root .text-slate-300,
-              body.printing-active #print-root .text-cyan-300,
-              body.printing-active #print-root .text-cyan-200,
+              body.printing-active #print-root .text-[#f2d675],
+              body.printing-active #print-root .text-[#f6e7a8],
               body.printing-active #print-root .text-emerald-200,
               body.printing-active #print-root .text-rose-200,
               body.printing-active #print-root .text-amber-200,
@@ -3505,11 +4351,174 @@ export default function TumulLegalV4() {
                 color: #111827 !important;
               }
 
+              /* Official A4 document cleanup */
+              body.printing-active #print-root {
+                font-size: 9pt !important;
+                overflow: visible !important;
+              }
+
+              body.printing-active #print-root > * {
+                max-width: 100% !important;
+              }
+
+              body.printing-active #print-root .overflow-x-auto,
+              body.printing-active #print-root .overflow-auto,
+              body.printing-active #print-root .overflow-hidden {
+                overflow: visible !important;
+                max-width: 100% !important;
+              }
+
+              body.printing-active #print-root table {
+                table-layout: fixed !important;
+                width: 100% !important;
+                font-size: 7.4pt !important;
+                page-break-inside: auto !important;
+              }
+
+              body.printing-active #print-root thead {
+                display: table-header-group !important;
+              }
+
+              body.printing-active #print-root tfoot {
+                display: table-footer-group !important;
+              }
+
+              body.printing-active #print-root tr {
+                break-inside: avoid !important;
+                page-break-inside: avoid !important;
+              }
+
+              body.printing-active #print-root th,
+              body.printing-active #print-root td {
+                padding: 2.2mm 1.6mm !important;
+                white-space: normal !important;
+                overflow-wrap: anywhere !important;
+                word-break: normal !important;
+                vertical-align: top !important;
+              }
+
               body.printing-active #print-root .rounded-3xl,
               body.printing-active #print-root .rounded-2xl {
                 border: 1px solid #d1d5db !important;
-                break-inside: avoid;
-                page-break-inside: avoid;
+                border-radius: 3mm !important;
+                box-shadow: none !important;
+              }
+
+              /* Keep compact cards together, but allow long lists/reports to flow naturally. */
+              body.printing-active #print-root .grid > .rounded-3xl,
+              body.printing-active #print-root .grid > .rounded-2xl {
+                break-inside: avoid !important;
+                page-break-inside: avoid !important;
+              }
+
+              body.printing-active #print-root .space-y-3 > *,
+              body.printing-active #print-root .space-y-4 > * {
+                break-inside: avoid !important;
+                page-break-inside: avoid !important;
+              }
+
+              /* Remove screen-only scrolling controls from official paper/PDF output. */
+              body.printing-active #print-root ::-webkit-scrollbar {
+                display: none !important;
+                width: 0 !important;
+                height: 0 !important;
+              }
+
+              /* Registers need denser typography to fit cleanly on portrait A4. */
+              body.printing-active #print-root[data-print-section="docket"] table,
+              body.printing-active #print-root[data-print-section="billing"] table {
+                font-size: 6.8pt !important;
+              }
+
+              body.printing-active #print-root[data-print-section="docket"] th,
+              body.printing-active #print-root[data-print-section="docket"] td,
+              body.printing-active #print-root[data-print-section="billing"] th,
+              body.printing-active #print-root[data-print-section="billing"] td {
+                padding: 1.8mm 1.1mm !important;
+              }
+
+              /* Keep short register labels readable instead of breaking inside words. */
+              body.printing-active #print-root[data-print-section="docket"] th:nth-child(5),
+              body.printing-active #print-root[data-print-section="docket"] td:nth-child(5),
+              body.printing-active #print-root[data-print-section="docket"] th:nth-child(6),
+              body.printing-active #print-root[data-print-section="docket"] td:nth-child(6),
+              body.printing-active #print-root[data-print-section="billing"] th:nth-child(9),
+              body.printing-active #print-root[data-print-section="billing"] td:nth-child(9) {
+                white-space: nowrap !important;
+                overflow-wrap: normal !important;
+                word-break: keep-all !important;
+              }
+
+              /* Give status/priority enough room while keeping the registers on portrait A4. */
+              body.printing-active #print-root[data-print-section="docket"] th:nth-child(1),
+              body.printing-active #print-root[data-print-section="docket"] td:nth-child(1) { width: 10% !important; }
+              body.printing-active #print-root[data-print-section="docket"] th:nth-child(2),
+              body.printing-active #print-root[data-print-section="docket"] td:nth-child(2) { width: 11% !important; }
+              body.printing-active #print-root[data-print-section="docket"] th:nth-child(3),
+              body.printing-active #print-root[data-print-section="docket"] td:nth-child(3) { width: 11% !important; }
+              body.printing-active #print-root[data-print-section="docket"] th:nth-child(4),
+              body.printing-active #print-root[data-print-section="docket"] td:nth-child(4) { width: 11% !important; }
+              body.printing-active #print-root[data-print-section="docket"] th:nth-child(5),
+              body.printing-active #print-root[data-print-section="docket"] td:nth-child(5) { width: 12% !important; }
+              body.printing-active #print-root[data-print-section="docket"] th:nth-child(6),
+              body.printing-active #print-root[data-print-section="docket"] td:nth-child(6) { width: 10% !important; }
+              body.printing-active #print-root[data-print-section="docket"] th:nth-child(7),
+              body.printing-active #print-root[data-print-section="docket"] td:nth-child(7) { width: 11% !important; }
+              body.printing-active #print-root[data-print-section="docket"] th:nth-child(8),
+              body.printing-active #print-root[data-print-section="docket"] td:nth-child(8) { width: 10% !important; }
+              body.printing-active #print-root[data-print-section="docket"] th:nth-child(9),
+              body.printing-active #print-root[data-print-section="docket"] td:nth-child(9) { width: 14% !important; }
+
+              body.printing-active #print-root[data-print-section="billing"] th:nth-child(1),
+              body.printing-active #print-root[data-print-section="billing"] td:nth-child(1) { width: 9% !important; }
+              body.printing-active #print-root[data-print-section="billing"] th:nth-child(2),
+              body.printing-active #print-root[data-print-section="billing"] td:nth-child(2) { width: 11% !important; }
+              body.printing-active #print-root[data-print-section="billing"] th:nth-child(3),
+              body.printing-active #print-root[data-print-section="billing"] td:nth-child(3) { width: 10% !important; }
+              body.printing-active #print-root[data-print-section="billing"] th:nth-child(4),
+              body.printing-active #print-root[data-print-section="billing"] td:nth-child(4),
+              body.printing-active #print-root[data-print-section="billing"] th:nth-child(5),
+              body.printing-active #print-root[data-print-section="billing"] td:nth-child(5) { width: 11% !important; }
+              body.printing-active #print-root[data-print-section="billing"] th:nth-child(6),
+              body.printing-active #print-root[data-print-section="billing"] td:nth-child(6),
+              body.printing-active #print-root[data-print-section="billing"] th:nth-child(7),
+              body.printing-active #print-root[data-print-section="billing"] td:nth-child(7),
+              body.printing-active #print-root[data-print-section="billing"] th:nth-child(8),
+              body.printing-active #print-root[data-print-section="billing"] td:nth-child(8) { width: 12% !important; }
+              body.printing-active #print-root[data-print-section="billing"] th:nth-child(9),
+              body.printing-active #print-root[data-print-section="billing"] td:nth-child(9) { width: 12% !important; }
+
+              body.printing-active #print-root[data-print-section="docket"] td:nth-child(5) span,
+              body.printing-active #print-root[data-print-section="docket"] td:nth-child(6) span,
+              body.printing-active #print-root[data-print-section="billing"] td:nth-child(9) span {
+                display: inline-block !important;
+                white-space: nowrap !important;
+                padding-left: 1.5mm !important;
+                padding-right: 1.5mm !important;
+              }
+
+              /* Prevent an official footer from being stranded on a page by itself. */
+              body.printing-active .official-print-footer {
+                break-inside: avoid !important;
+                page-break-inside: avoid !important;
+              }
+
+              /* Compact management reports so headings stay with their content. */
+              body.printing-active #print-root h1,
+              body.printing-active #print-root h2,
+              body.printing-active #print-root h3 {
+                break-after: avoid !important;
+                page-break-after: avoid !important;
+              }
+
+              body.printing-active #print-root[data-print-section="dashboard"] .grid,
+              body.printing-active #print-root[data-print-section="reports"] .grid {
+                gap: 3mm !important;
+              }
+
+              body.printing-active #print-root[data-print-section="activity"] .space-y-3,
+              body.printing-active #print-root[data-print-section="activity"] .space-y-4 {
+                gap: 2mm !important;
               }
             }
           `}</style>
