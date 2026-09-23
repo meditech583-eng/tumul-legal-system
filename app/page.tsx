@@ -2348,34 +2348,6 @@ export default function TumulLegalV4() {
               </p>
             </div>
 
-            <div className="mb-6 grid grid-cols-2 gap-3 rounded-2xl bg-white/5 p-1">
-              <button
-                onClick={() => {
-                  setAuthMessage("");
-                }}
-                className={`rounded-xl py-3 text-base font-semibold transition ${
-                  true
-                    ? "bg-[#d4af37] text-slate-950 shadow-lg"
-                    : "bg-transparent text-white hover:bg-white/10"
-                }`}
-              >
-                Login
-              </button>
-
-              <button
-                onClick={() => {
-                  setAuthMessage("");
-                }}
-                className={`rounded-xl py-3 text-base font-semibold transition ${
-                  authMode === "signup"
-                    ? "bg-[#d4af37] text-slate-950 shadow-lg"
-                    : "bg-transparent text-white hover:bg-white/10"
-                }`}
-              >
-                Sign Up
-              </button>
-            </div>
-
             <form onSubmit={handleAuth} className="space-y-4">
               <div>
                 <label className="mb-2 block text-sm text-slate-300">
