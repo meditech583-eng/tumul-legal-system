@@ -2330,9 +2330,10 @@ export default function TumulLegalV4() {
 
   if (!session) {
     return (
-      <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(212,175,55,0.12),_transparent_26%),radial-gradient(circle_at_top_right,_rgba(16,74,61,0.34),_transparent_30%),linear-gradient(160deg,#03130f_0%,#071d18_48%,#0b211c_100%)] px-4 py-10 text-white">
-        <div className="mx-auto flex min-h-[calc(100vh-5rem)] max-w-md items-center">
-          <div className="w-full rounded-3xl border border-[#d4af37]/20 bg-[#0b211c]/80 p-8 shadow-[0_20px_70px_rgba(0,0,0,0.38)] backdrop-blur-xl">
+      <div className="relative min-h-screen overflow-hidden bg-[#03130f] bg-[url('/tumul-login-bg.png')] bg-cover bg-center bg-no-repeat px-4 py-10 text-white">
+        <div className="absolute inset-0 bg-gradient-to-r from-black/10 via-black/20 to-[#03130f]/55" aria-hidden="true" />
+        <div className="relative z-10 mx-auto flex min-h-[calc(100vh-5rem)] max-w-7xl items-center justify-center lg:justify-end">
+          <div className="w-full max-w-[480px] rounded-3xl border border-[#d4af37]/20 bg-[#0b211c]/80 p-8 shadow-[0_20px_70px_rgba(0,0,0,0.38)] backdrop-blur-xl">
             <div className="mb-8">
               <img
                 src="/tumul-logo.png"
