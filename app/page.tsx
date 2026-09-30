@@ -339,6 +339,12 @@ export default function TumulLegalV4() {
     confirmPassword: "",
   });
 
+  const [editingStaff, setEditingStaff] = useState<StaffUser | null>(null);
+  const [editStaffForm, setEditStaffForm] = useState({
+    full_name: "",
+    role: "Viewer" as UserRole,
+  });
+
 
   const [deadlines, setDeadlines] = useState<MatterDeadline[]>([]);
   const [matterDeadlines, setMatterDeadlines] = useState<MatterDeadline[]>([]);
@@ -1541,6 +1547,69 @@ export default function TumulLegalV4() {
         error instanceof Error ? error.message : "Unknown error while creating user.";
       alert(`Unable to create staff login: ${message}`);
     }
+  };
+
+  const handleStartEditStaff = (user: StaffUser) => {
+    if (currentUserProfile.role !== "Super Admin") {
+      alert("Only Super Admin can edit users.");
+      return;
+    }
+
+    if (user.email.toLowerCase() === "mek@tumullegal.com") {
+      alert("The Super Admin profile is protected from role changes here.");
+      return;
+    }
+
+    setEditingStaff(user);
+    setEditStaffForm({
+      full_name: user.full_name,
+      role: user.role,
+    });
+  };
+
+  const handleCancelEditStaff = () => {
+    setEditingStaff(null);
+    setEditStaffForm({
+      full_name: "",
+      role: "Viewer",
+    });
+  };
+
+  const handleSaveStaffEdit = async () => {
+    if (currentUserProfile.role !== "Super Admin") {
+      alert("Only Super Admin can edit users.");
+      return;
+    }
+
+    if (!editingStaff) return;
+
+    const cleanName = editStaffForm.full_name.trim();
+    if (!cleanName) {
+      alert("Please enter the staff member's full name.");
+      return;
+    }
+
+    const { error } = await supabase
+      .from("staff_users")
+      .update({
+        full_name: cleanName,
+        role: editStaffForm.role,
+      })
+      .eq("email", editingStaff.email);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    logActivity(
+      `Updated user ${editingStaff.email}: ${cleanName} — ${editStaffForm.role}`,
+      "Users"
+    );
+
+    handleCancelEditStaff();
+    await loadStaffUsers();
+    alert("Staff profile updated successfully.");
   };
 
   const handleToggleStaffStatus = async (user: StaffUser) => {
@@ -3745,6 +3814,59 @@ export default function TumulLegalV4() {
                   </div>
                 </div>
 
+                {editingStaff && (
+                  <div className="mb-5 rounded-2xl border border-[#d4af37]/30 bg-[#d4af37]/10 p-4">
+                    <div className="mb-3">
+                      <div className="text-sm font-semibold text-[#f5d76e]">Edit Staff User</div>
+                      <div className="mt-1 text-xs text-slate-400">
+                        Login email remains unchanged: {editingStaff.email}
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <input
+                        value={editStaffForm.full_name}
+                        onChange={(e) =>
+                          setEditStaffForm((prev) => ({
+                            ...prev,
+                            full_name: e.target.value,
+                          }))
+                        }
+                        placeholder="Full Name"
+                        className={inputClass}
+                      />
+
+                      <select
+                        value={editStaffForm.role}
+                        onChange={(e) =>
+                          setEditStaffForm((prev) => ({
+                            ...prev,
+                            role: e.target.value as UserRole,
+                          }))
+                        }
+                        className={inputClass}
+                      >
+                        {(["Lawyer", "Secretary", "Billing", "Viewer"] as UserRole[]).map(
+                          (role) => (
+                            <option key={role} value={role}>
+                              {role}
+                            </option>
+                          )
+                        )}
+                      </select>
+                    </div>
+
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <button onClick={handleSaveStaffEdit} className={primaryButton}>
+                        Save Changes
+                      </button>
+                      <button onClick={handleCancelEditStaff} className={secondaryButton}>
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 <div className="overflow-x-auto">
                   <table className="min-w-full text-sm">
                     <thead>
@@ -4111,7 +4233,7 @@ export default function TumulLegalV4() {
                 <div className="mb-4">
                   <h3 className={sectionTitle}>User Roles & Access</h3>
                   <p className={muted}>
-                    Activate, deactivate or remove users here.
+                    Edit staff names and roles, or activate, deactivate and remove users here.
                   </p>
                 </div>
 
@@ -4158,6 +4280,18 @@ export default function TumulLegalV4() {
                           </td>
                           <td className="px-3 py-4">
                             <div className="flex flex-wrap gap-2">
+                              <button
+                                onClick={() => handleStartEditStaff(staff)}
+                                className={secondaryButton}
+                                disabled={staff.email.toLowerCase() === "mek@tumullegal.com"}
+                                title={
+                                  staff.email.toLowerCase() === "mek@tumullegal.com"
+                                    ? "Super Admin profile is protected"
+                                    : "Edit staff name and role"
+                                }
+                              >
+                                Edit
+                              </button>
                               <button
                                 onClick={() => handleToggleStaffStatus(staff)}
                                 className={secondaryButton}
