@@ -469,7 +469,12 @@ export default function TumulLegalV4() {
     if (!mattersRes.error) setMatters((mattersRes.data as Matter[]) || []);
     if (!clientsRes.error) setClients((clientsRes.data as Client[]) || []);
     if (!invoicesRes.error) setInvoices((invoicesRes.data as Invoice[]) || []);
-    if (!staffRes.error) setStaffUsers((staffRes.data as StaffUser[]) || []);
+    // Keep the staff profile returned by the secure verify-staff API.
+    // Under RLS, a normal staff user's browser query may legitimately return
+    // zero staff_users rows. Do not replace the verified profile with [].
+    if (!staffRes.error && staffRes.data && staffRes.data.length > 0) {
+      setStaffUsers(staffRes.data as StaffUser[]);
+    }
     if (!deadlinesRes.error) {
       setDeadlines((deadlinesRes.data as MatterDeadline[]) || []);
     }
