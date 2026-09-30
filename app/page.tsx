@@ -3133,9 +3133,11 @@ export default function TumulLegalV4() {
                       {([
                         ["overview", "Overview"], ["tasks", "Tasks & Deadlines"], ["notes", "Notes & History"],
                         ["documents", "Documents"], ["billing", "Billing"], ["activity", "Activity"]
-                      ] as [MatterFileTab, string][]).map(([id, label]) => (
-                        <button key={id} onClick={() => setMatterFileTab(id)} className={matterFileTab === id ? primaryButton : secondaryButton}>{label}</button>
-                      ))}
+                      ] as [MatterFileTab, string][])
+                        .filter(([id]) => id !== "billing" || permissions.billing)
+                        .map(([id, label]) => (
+                          <button key={id} onClick={() => setMatterFileTab(id)} className={matterFileTab === id ? primaryButton : secondaryButton}>{label}</button>
+                        ))}
                     </div>
 
                     {matterFileTab === "overview" && (
@@ -3375,7 +3377,7 @@ export default function TumulLegalV4() {
                     </div>
                   )}
 
-                  {matterFileTab === "billing" && <div className="rounded-3xl border border-white/10 bg-white/5 p-6"><div className="mb-4 flex items-center justify-between"><div><h4 className="text-lg font-semibold text-white">Matter Billing</h4><p className="text-sm text-slate-400">Invoices connected to {selectedMatter.matter_no}.</p></div></div><div className="space-y-3">{invoices.filter(i=>i.matter_no===selectedMatter.matter_no).map(i=><div key={i.id} className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-slate-950/40 p-4 md:flex-row md:items-center md:justify-between"><div><p className="font-semibold text-white">{i.invoice_no}</p><p className="text-sm text-slate-400">{i.service_description || "Legal service / professional fee"}</p></div><div className="text-left md:text-right"><p className="font-semibold text-white">{currency(Number(i.amount||0))}</p><span className={`mt-1 inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getStatusClass(i.status)}`}>{i.status}</span></div></div>)}{!invoices.some(i=>i.matter_no===selectedMatter.matter_no) && <p className="rounded-2xl border border-dashed border-white/10 p-5 text-sm text-slate-400">No invoices are linked to this matter.</p>}</div></div>}
+                  {matterFileTab === "billing" && permissions.billing && <div className="rounded-3xl border border-white/10 bg-white/5 p-6"><div className="mb-4 flex items-center justify-between"><div><h4 className="text-lg font-semibold text-white">Matter Billing</h4><p className="text-sm text-slate-400">Invoices connected to {selectedMatter.matter_no}.</p></div></div><div className="space-y-3">{invoices.filter(i=>i.matter_no===selectedMatter.matter_no).map(i=><div key={i.id} className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-slate-950/40 p-4 md:flex-row md:items-center md:justify-between"><div><p className="font-semibold text-white">{i.invoice_no}</p><p className="text-sm text-slate-400">{i.service_description || "Legal service / professional fee"}</p></div><div className="text-left md:text-right"><p className="font-semibold text-white">{currency(Number(i.amount||0))}</p><span className={`mt-1 inline-flex rounded-full px-3 py-1 text-xs font-semibold ${getStatusClass(i.status)}`}>{i.status}</span></div></div>)}{!invoices.some(i=>i.matter_no===selectedMatter.matter_no) && <p className="rounded-2xl border border-dashed border-white/10 p-5 text-sm text-slate-400">No invoices are linked to this matter.</p>}</div></div>}
                     {matterFileTab === "activity" && <div className="rounded-3xl border border-white/10 bg-white/5 p-6"><h4 className="text-lg font-semibold text-white">Matter Activity</h4><p className="mt-1 text-sm text-slate-400">Recent recorded actions that reference {selectedMatter.matter_no}.</p><div className="mt-4 space-y-3">{activityLog.filter(a=>a.action.includes(selectedMatter.matter_no)).map(a=><div key={a.id} className="rounded-2xl border border-white/10 bg-slate-950/40 p-4"><p className="text-sm font-semibold text-white">{a.action}</p><p className="mt-1 text-xs text-slate-400">{a.actor} • {a.role} • {a.time}</p></div>)}{!activityLog.some(a=>a.action.includes(selectedMatter.matter_no)) && <p className="rounded-2xl border border-dashed border-white/10 p-5 text-sm text-slate-400">No matching activity recorded in this browser yet.</p>}</div></div>}
                     {matterFileTab === "documents" ? null : null}
 
