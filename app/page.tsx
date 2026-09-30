@@ -489,46 +489,56 @@ export default function TumulLegalV4() {
 
 
   const verifyStaffAccess = async (nextSession: any) => {
-    const loginEmail = nextSession?.user?.email?.trim().toLowerCase();
+    const accessToken = nextSession?.access_token;
 
-    if (!loginEmail) {
+    if (!accessToken) {
       setAccessVerified(false);
+      setAuthMessage("Your session has expired. Please log in again.");
       return false;
     }
 
-    const { data, error } = await supabase
-      .from("staff_users")
-      .select("id, full_name, email, role, is_active, created_at, created_by")
-      .eq("email", loginEmail)
-      .maybeSingle();
+    try {
+      const response = await fetch("/api/auth/verify-staff", {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+        cache: "no-store",
+      });
 
-    if (error) {
-      console.error("Unable to verify staff access:", error.message);
-      setAccessVerified(false);
-      setAuthMessage("Unable to verify your staff access. Please contact the administrator.");
-      await supabase.auth.signOut();
-      return false;
-    }
+      const result = await response.json();
 
-    if (!data) {
+      if (!response.ok || !result?.staff) {
+        setAccessVerified(false);
+        setAuthMessage(
+          result?.error ||
+            "Access denied. Your login is valid, but this email is not an authorised Tumul Legal staff account."
+        );
+        await supabase.auth.signOut();
+        return false;
+      }
+
+      if (result.staff.is_active === false) {
+        setAccessVerified(false);
+        setAuthMessage(
+          "Your Tumul Legal staff account has been deactivated. Please contact the administrator."
+        );
+        await supabase.auth.signOut();
+        return false;
+      }
+
+      setStaffUsers([result.staff as StaffUser]);
+      setAccessVerified(true);
+      return true;
+    } catch (error) {
+      console.error("Unable to verify staff access:", error);
       setAccessVerified(false);
       setAuthMessage(
-        "Access denied. Your login is valid, but this email is not an authorised Tumul Legal staff account."
+        "Unable to verify your staff access. Please contact the administrator."
       );
       await supabase.auth.signOut();
       return false;
     }
-
-    if (data.is_active === false) {
-      setAccessVerified(false);
-      setAuthMessage("Your Tumul Legal staff account has been deactivated. Please contact the administrator.");
-      await supabase.auth.signOut();
-      return false;
-    }
-
-    setStaffUsers([data as StaffUser]);
-    setAccessVerified(true);
-    return true;
   };
 
 
