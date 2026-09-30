@@ -3814,59 +3814,6 @@ export default function TumulLegalV4() {
                   </div>
                 </div>
 
-                {editingStaff && (
-                  <div className="mb-5 rounded-2xl border border-[#d4af37]/30 bg-[#d4af37]/10 p-4">
-                    <div className="mb-3">
-                      <div className="text-sm font-semibold text-[#f5d76e]">Edit Staff User</div>
-                      <div className="mt-1 text-xs text-slate-400">
-                        Login email remains unchanged: {editingStaff.email}
-                      </div>
-                    </div>
-
-                    <div className="grid gap-3 md:grid-cols-2">
-                      <input
-                        value={editStaffForm.full_name}
-                        onChange={(e) =>
-                          setEditStaffForm((prev) => ({
-                            ...prev,
-                            full_name: e.target.value,
-                          }))
-                        }
-                        placeholder="Full Name"
-                        className={inputClass}
-                      />
-
-                      <select
-                        value={editStaffForm.role}
-                        onChange={(e) =>
-                          setEditStaffForm((prev) => ({
-                            ...prev,
-                            role: e.target.value as UserRole,
-                          }))
-                        }
-                        className={inputClass}
-                      >
-                        {(["Lawyer", "Secretary", "Billing", "Viewer"] as UserRole[]).map(
-                          (role) => (
-                            <option key={role} value={role}>
-                              {role}
-                            </option>
-                          )
-                        )}
-                      </select>
-                    </div>
-
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      <button onClick={handleSaveStaffEdit} className={primaryButton}>
-                        Save Changes
-                      </button>
-                      <button onClick={handleCancelEditStaff} className={secondaryButton}>
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                )}
-
                 <div className="overflow-x-auto">
                   <table className="min-w-full text-sm">
                     <thead>
@@ -4310,6 +4257,107 @@ export default function TumulLegalV4() {
                       ))}
                     </tbody>
                   </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* EDIT STAFF USER MODAL */}
+          {editingStaff && (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+              onMouseDown={(e) => {
+                if (e.target === e.currentTarget) handleCancelEditStaff();
+              }}
+            >
+              <div
+                className="w-full max-w-lg rounded-3xl border border-[#d4af37]/30 bg-[#0d241d] p-6 shadow-2xl"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="edit-staff-title"
+              >
+                <div className="mb-5">
+                  <p className="text-xs uppercase tracking-[0.25em] text-[#d4af37]">
+                    User Management
+                  </p>
+                  <h3 id="edit-staff-title" className="mt-2 text-xl font-bold text-white">
+                    Edit Staff User
+                  </h3>
+                  <p className="mt-2 text-sm text-slate-400">
+                    Update the staff member&apos;s name or assigned system role.
+                  </p>
+                </div>
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-400">
+                      Full Name
+                    </label>
+                    <input
+                      value={editStaffForm.full_name}
+                      onChange={(e) =>
+                        setEditStaffForm((prev) => ({
+                          ...prev,
+                          full_name: e.target.value,
+                        }))
+                      }
+                      className={inputClass}
+                      placeholder="Full Name"
+                      autoFocus
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-400">
+                      Login Email
+                    </label>
+                    <input
+                      value={editingStaff.email}
+                      disabled
+                      className={`${inputClass} cursor-not-allowed opacity-60`}
+                    />
+                    <p className="mt-2 text-xs text-slate-500">
+                      Login email cannot be changed from this screen.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-400">
+                      System Role
+                    </label>
+                    <select
+                      value={editStaffForm.role}
+                      onChange={(e) =>
+                        setEditStaffForm((prev) => ({
+                          ...prev,
+                          role: e.target.value as UserRole,
+                        }))
+                      }
+                      className={inputClass}
+                    >
+                      <option value="Lawyer">Lawyer</option>
+                      <option value="Secretary">Secretary</option>
+                      <option value="Billing">Billing</option>
+                      <option value="Viewer">Viewer</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="mt-6 flex justify-end gap-3">
+                  <button
+                    type="button"
+                    onClick={handleCancelEditStaff}
+                    className={secondaryButton}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveStaffEdit}
+                    className={primaryButton}
+                  >
+                    Save Changes
+                  </button>
                 </div>
               </div>
             </div>
