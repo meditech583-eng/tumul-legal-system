@@ -2208,8 +2208,8 @@ export default function TumulLegalV4() {
   };
 
   const handleDeleteMatter = async (matter: Matter) => {
-    if (currentUserProfile.role !== "Super Admin" && currentUserProfile.role !== "Lawyer") {
-      alert("Only Super Admin or Lawyer can delete matters.");
+    if (currentUserProfile.role !== "Super Admin") {
+      alert("Only Super Admin can delete matters.");
       return;
     }
 
@@ -3078,12 +3078,14 @@ export default function TumulLegalV4() {
                                 >
                                   Open
                                 </button>
-                                <button
-                                  onClick={() => handleDeleteMatter(matter)}
-                                  className="rounded-2xl px-4 py-2 text-xs font-semibold transition border border-rose-400/30 bg-rose-400/10 text-rose-200 hover:bg-rose-400/20"
-                                >
-                                  Delete
-                                </button>
+                                {currentUserProfile.role === "Super Admin" && (
+                                  <button
+                                    onClick={() => handleDeleteMatter(matter)}
+                                    className="rounded-2xl px-4 py-2 text-xs font-semibold transition border border-rose-400/30 bg-rose-400/10 text-rose-200 hover:bg-rose-400/20"
+                                  >
+                                    Delete
+                                  </button>
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -4016,9 +4018,11 @@ export default function TumulLegalV4() {
                             <p className="font-semibold text-white">{matter.matter_no}</p>
                             <p className="text-xs text-slate-400">{matter.client_name} • {matter.status}</p>
                           </div>
-                          <button onClick={() => handleDeleteMatter(matter)} className="rounded-2xl px-4 py-2 text-xs font-semibold transition border border-rose-400/30 bg-rose-400/10 text-rose-200 hover:bg-rose-400/20">
-                            Delete
-                          </button>
+                          {currentUserProfile.role === "Super Admin" && (
+                            <button onClick={() => handleDeleteMatter(matter)} className="rounded-2xl px-4 py-2 text-xs font-semibold transition border border-rose-400/30 bg-rose-400/10 text-rose-200 hover:bg-rose-400/20">
+                              Delete
+                            </button>
+                          )}
                         </div>
                       ))
                     )}
