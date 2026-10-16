@@ -275,6 +275,9 @@ export default function TumulLegalV4() {
   const [session, setSession] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [accessVerified, setAccessVerified] = useState(false);
+  // Keep auth refreshes from unmounting the file input when Android's picker opens.
+  const verifiedUserIdRef = useRef<string | null>(null);
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [authMessage, setAuthMessage] = useState("");
@@ -364,13 +367,15 @@ export default function TumulLegalV4() {
   const [documentCategory, setDocumentCategory] = useState("Client Correspondence");
   const [documentFile, setDocumentFile] = useState<File | null>(null);
   const documentInputRef = useRef<HTMLInputElement | null>(null);
+  const selectedDocumentRef = useRef<File | null>(null);
   const [documentSelectionMessage, setDocumentSelectionMessage] = useState("");
 
   // Android may discard the browser page while its system file picker is open.
   // Restore only the navigation/draft fields; never persist document contents.
   const mobileDocumentDraftKey = "tumul-mobile-document-draft-v1";
-  const handleDocumentFileSelected = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleDocumentFileSelected = (event: React.SyntheticEvent<HTMLInputElement>) => {
     const file = event.currentTarget.files?.item(0) ?? null;
+    selectedDocumentRef.current = file;
     setDocumentFile(file);
     setDocumentSelectionMessage(
       file ? `Selected: ${file.name} (${formatFileSize(file.size)})` :
@@ -553,6 +558,7 @@ export default function TumulLegalV4() {
       }
 
       setStaffUsers([result.staff as StaffUser]);
+      verifiedUserIdRef.current = nextSession.user?.id || null;
       setAccessVerified(true);
       return true;
     } catch (error) {
@@ -687,14 +693,33 @@ export default function TumulLegalV4() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event: string, nextSession: any) => {
-      setSession(nextSession);
+    } = supabase.auth.onAuthStateChange((event: string, nextSession: any) => {
+      // TOKEN_REFRESHED can happen when Android returns from its file picker.
+      // Replacing the entire page with "Loading..." here destroys the native
+      // file input before the browser can deliver its change event.
+      if (event === "TOKEN_REFRESHED") {
+        setSession(nextSession);
+        return;
+      }
 
-      // Do not await database calls directly inside onAuthStateChange.
+      // Repeated SIGNED_IN events may occur when a browser tab regains focus.
+      // An already-verified user should keep the current screen and file input.
+      if (
+        (event === "SIGNED_IN" || event === "INITIAL_SESSION") &&
+        nextSession?.user?.id &&
+        verifiedUserIdRef.current === nextSession.user.id
+      ) {
+        setSession(nextSession);
+        return;
+      }
+
+      setSession(nextSession);
+      // Supabase warns against awaiting API calls inside auth callbacks.
       window.setTimeout(() => {
         if (nextSession) {
           void authoriseAndLoad(nextSession);
         } else {
+          verifiedUserIdRef.current = null;
           setAccessVerified(false);
           clearProtectedData();
           setLoading(false);
@@ -947,6 +972,7 @@ export default function TumulLegalV4() {
     setNoteText("");
     setDocumentTitle("");
     setDocumentCategory("Client Correspondence");
+    selectedDocumentRef.current = null;
     setDocumentFile(null);
     setDeadlineForm({
       title: "",
@@ -1239,7 +1265,13 @@ export default function TumulLegalV4() {
       return;
     }
 
-    if (!documentFile) {
+    // Android can dispatch the file event just before React commits state.
+    // Prefer the synchronous reference, then the native input, then state.
+    const fileToUpload =
+      selectedDocumentRef.current ??
+      documentInputRef.current?.files?.item(0) ??
+      documentFile;
+    if (!fileToUpload) {
       alert("Please choose a file to upload.");
       return;
     }
@@ -1250,17 +1282,17 @@ export default function TumulLegalV4() {
     let uploadedPath = "";
 
     try {
-      const safeName = documentFile.name
+      const safeName = fileToUpload.name
         .replace(/[^a-zA-Z0-9._-]+/g, "-")
         .replace(/-+/g, "-");
       uploadedPath = `${selectedMatter.matter_no}/${Date.now()}-${safeName}`;
 
       const { error: uploadError } = await supabase.storage
         .from("matter-documents")
-        .upload(uploadedPath, documentFile, {
+        .upload(uploadedPath, fileToUpload, {
           cacheControl: "3600",
           upsert: false,
-          contentType: documentFile.type || undefined,
+          contentType: fileToUpload.type || undefined,
         });
 
       if (uploadError) throw uploadError;
@@ -1271,10 +1303,10 @@ export default function TumulLegalV4() {
           matter_id: selectedMatter.id,
           matter_no: selectedMatter.matter_no,
           document_name: cleanTitle,
-          file_name: documentFile.name,
+          file_name: fileToUpload.name,
           file_path: uploadedPath,
-          file_type: documentFile.type || null,
-          file_size: documentFile.size,
+          file_type: fileToUpload.type || null,
+          file_size: fileToUpload.size,
           category: documentCategory,
           uploaded_by: currentUserProfile.name || null,
           uploaded_by_email: currentUserProfile.email || null,
@@ -1292,6 +1324,7 @@ export default function TumulLegalV4() {
 
       setDocumentTitle("");
       setDocumentCategory("Client Correspondence");
+      selectedDocumentRef.current = null;
       setDocumentFile(null);
       setDocumentSelectionMessage("");
       if (documentInputRef.current) documentInputRef.current.value = "";
@@ -3403,6 +3436,7 @@ export default function TumulLegalV4() {
                                 type="file"
                                 accept=".pdf,application/pdf"
                                 onChange={handleDocumentFileSelected}
+                                onInput={handleDocumentFileSelected}
                                 className="min-w-0 flex-1 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-slate-300 file:mr-4 file:rounded-lg file:border-0 file:bg-[#d4af37] file:px-3 file:py-2 file:font-semibold file:text-[#071d18]"
                               />
                               <button
