@@ -363,6 +363,20 @@ export default function TumulLegalV4() {
   const [documentTitle, setDocumentTitle] = useState("");
   const [documentCategory, setDocumentCategory] = useState("Client Correspondence");
   const [documentFile, setDocumentFile] = useState<File | null>(null);
+  const documentInputRef = useRef<HTMLInputElement | null>(null);
+  const [documentSelectionMessage, setDocumentSelectionMessage] = useState("");
+
+  // Android may discard the browser page while its system file picker is open.
+  // Restore only the navigation/draft fields; never persist document contents.
+  const mobileDocumentDraftKey = "tumul-mobile-document-draft-v1";
+  const handleDocumentFileSelected = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.item(0) ?? null;
+    setDocumentFile(file);
+    setDocumentSelectionMessage(
+      file ? `Selected: ${file.name} (${formatFileSize(file.size)})` :
+      "No file was returned by your phone's file picker. Try selecting it from Downloads."
+    );
+  };
   const [isUploadingDocument, setIsUploadingDocument] = useState(false);
 
   useEffect(() => {
@@ -736,6 +750,7 @@ export default function TumulLegalV4() {
   };
 
   const handleLogout = async () => {
+    try { sessionStorage.removeItem(mobileDocumentDraftKey); } catch {}
     logActivity("Logged out of system", "Authentication");
     await supabase.auth.signOut();
   };
@@ -886,7 +901,42 @@ export default function TumulLegalV4() {
     ]);
   };
 
+  // Keep the document screen available if Android reloads the page while
+  // returning from the external file picker. A File object cannot survive a reload.
+  useEffect(() => {
+    if (!accessVerified || matters.length === 0 || selectedMatter) return;
+    let draft: { matterId?: number; title?: string; category?: string } | null = null;
+    try {
+      const saved = sessionStorage.getItem(mobileDocumentDraftKey);
+      if (saved) draft = JSON.parse(saved);
+    } catch { /* Ignore malformed saved UI state. */ }
+    if (!draft?.matterId) return;
+    const matter = matters.find((item) => item.id === draft!.matterId);
+    if (!matter) return;
+    setSelectedMatter({ ...matter, summary: matter.summary || "", next_step: matter.next_step || "", court_date: matter.court_date || "", cost_estimate: Number(matter.cost_estimate || 0) });
+    setIsMatterPanelOpen(true);
+    setActiveTab("docket");
+    setMatterFileTab("documents");
+    setDocumentTitle(draft.title || "");
+    setDocumentCategory(draft.category || "Client Correspondence");
+    setDocumentSelectionMessage("If Android restarted the page, please select your PDF again.");
+    void loadDocumentsForMatter(matter.id);
+  }, [accessVerified, matters, selectedMatter]);
+
+  useEffect(() => {
+    if (!selectedMatter || !isMatterPanelOpen || matterFileTab !== "documents") return;
+    try {
+      sessionStorage.setItem(mobileDocumentDraftKey, JSON.stringify({
+        matterId: selectedMatter.id,
+        title: documentTitle,
+        category: documentCategory,
+      }));
+    } catch { /* Storage may be unavailable in private mode. */ }
+  }, [selectedMatter, isMatterPanelOpen, matterFileTab, documentTitle, documentCategory]);
+
   const closeMatterFile = () => {
+    try { sessionStorage.removeItem(mobileDocumentDraftKey); } catch {}
+    setDocumentSelectionMessage("");
     setSelectedMatter(null);
     setIsMatterPanelOpen(false);
     setMatterFileTab("overview");
@@ -1243,12 +1293,10 @@ export default function TumulLegalV4() {
       setDocumentTitle("");
       setDocumentCategory("Client Correspondence");
       setDocumentFile(null);
+      setDocumentSelectionMessage("");
+      if (documentInputRef.current) documentInputRef.current.value = "";
 
-      const fileInput = document.getElementById(
-        "matter-document-file"
-      ) as HTMLInputElement | null;
-      if (fileInput) fileInput.value = "";
-
+      try { sessionStorage.removeItem(mobileDocumentDraftKey); } catch {}
       await loadDocumentsForMatter(selectedMatter.id);
       alert("Document uploaded successfully.");
     } catch (error: any) {
@@ -3351,8 +3399,10 @@ export default function TumulLegalV4() {
                             <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-center">
                               <input
                                 id="matter-document-file"
+                                ref={documentInputRef}
                                 type="file"
-                                onChange={(e) => setDocumentFile(e.target.files?.[0] || null)}
+                                accept=".pdf,application/pdf"
+                                onChange={handleDocumentFileSelected}
                                 className="min-w-0 flex-1 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-slate-300 file:mr-4 file:rounded-lg file:border-0 file:bg-[#d4af37] file:px-3 file:py-2 file:font-semibold file:text-[#071d18]"
                               />
                               <button
@@ -3364,6 +3414,9 @@ export default function TumulLegalV4() {
                                 {isUploadingDocument ? "Uploading..." : "Upload Document"}
                               </button>
                             </div>
+                            {documentSelectionMessage && (
+                              <p role="status" className="mt-2 text-xs text-amber-200">{documentSelectionMessage}</p>
+                            )}
                             <p className="mt-2 text-xs text-slate-500">
                               Files are stored in the private matter-documents storage bucket and linked to {selectedMatter?.matter_no}.
                             </p>
