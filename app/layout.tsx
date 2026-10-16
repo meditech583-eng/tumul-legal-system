@@ -1,3 +1,4 @@
+
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
@@ -13,8 +14,18 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "MTEC – Tumul Legal",
-  description: "Legal Management System powered by MTEC",
+  title: "Tumul Legal | Legal Management System",
+  description:
+    "Secure Legal Management System for Tumul Legal, developed by Mtech IT Solutions",
+
+  applicationName: "Tumul Legal",
+  manifest: "/manifest.json",
+
+  appleWebApp: {
+    capable: true,
+    title: "Tumul Legal",
+    statusBarStyle: "default",
+  },
 
   icons: {
     icon: "/tumul-logo.png",

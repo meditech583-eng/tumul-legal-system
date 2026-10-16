@@ -1,0 +1,19 @@
+
+{
+  "name": "Tumul Legal Management System",
+  "short_name": "Tumul Legal",
+  "description": "Secure Legal Management System for Tumul Legal",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#071c18",
+  "theme_color": "#071c18",
+  "icons": [
+    {
+      "src": "/tumul-logo.png",
+      "sizes": "any",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

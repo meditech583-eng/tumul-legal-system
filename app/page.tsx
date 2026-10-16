@@ -2464,7 +2464,7 @@ export default function TumulLegalV4() {
                 className="mb-5 h-20 w-auto max-w-[230px] object-contain object-left"
               />
               <p className="text-xs font-semibold uppercase tracking-[0.35em] text-[#d4af37]">
-                {branding.platformName || "MTEC"} SYSTEMS
+                Mtech IT Solutions
               </p>
               <h1 className="mt-3 text-3xl font-bold tracking-tight text-white">
                 {branding.clientName || "Tumul Legal"}
@@ -2541,7 +2541,7 @@ export default function TumulLegalV4() {
               className="mb-4 h-16 w-auto max-w-[220px] object-contain object-left"
             />
             <p className="text-xs font-semibold uppercase tracking-[0.35em] text-[#d4af37]">
-              {branding.platformName || "MTEC"}
+              Mtech IT Solutions
             </p>
             <h1 className="mt-3 text-3xl font-bold text-white">
               {branding.clientName || "Tumul Legal"}
