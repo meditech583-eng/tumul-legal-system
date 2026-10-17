@@ -1984,6 +1984,17 @@ export default function TumulLegalV4() {
           .join("")
       : `<tr><td colspan="4" class="empty">No matching activity recorded in this browser.</td></tr>`;
 
+    const documentRows = matterDocuments.length
+      ? matterDocuments.map((item, index) => `
+          <tr>
+            <td>${index + 1}</td>
+            <td><strong>${escapeHtml(item.document_name)}</strong><div class="file-detail">${escapeHtml(item.file_name)}</div></td>
+            <td>${escapeHtml(item.category || "Other")}</td>
+            <td>${escapeHtml(item.uploaded_by || "—")}</td>
+            <td>${escapeHtml(item.created_at ? new Date(item.created_at).toLocaleDateString("en-PG") : "—")}</td>
+          </tr>`).join("")
+      : `<tr><td colspan="5" class="empty">No documents recorded for this matter.</td></tr>`;
+
     const generatedAt = new Date().toLocaleString("en-PG");
     const caseFileHtml = `
       <!doctype html>
@@ -2022,10 +2033,39 @@ export default function TumulLegalV4() {
             .empty { color: #64748b; text-align: center; padding: 16px; }
             .notice { border: 1px dashed #cbd5e1; border-radius: 10px; padding: 12px; color: #64748b; font-size: 11px; line-height: 1.5; }
             .footer { margin-top: 30px; padding-top: 12px; border-top: 1px solid #d8dee6; color: #64748b; font-size: 9px; display: flex; justify-content: space-between; gap: 20px; }
+            /* Tumul Legal document design system: restrained, legible, A4 ready. */
+            .page { box-shadow: 0 16px 45px rgba(15, 23, 42, .10); }
+            .header { align-items: center; border-bottom: 2px solid #123b32; padding-bottom: 17px; }
+            .brand h1 { font-size: 25px; letter-spacing: .055em; }
+            .brand p { font-size: 10px; letter-spacing: .03em; }
+            .firm { font-size: 9.5px; line-height: 1.55; }
+            .document-control { display: flex; justify-content: space-between; gap: 12px; margin-top: 12px; padding: 8px 10px; background: #f4f7f5; color: #245044; border-left: 3px solid #b99839; font-size: 8px; font-weight: 800; letter-spacing: .12em; }
+            .title { margin-top: 21px; }
+            .title h2 { font-size: 26px; letter-spacing: -.02em; }
+            .eyebrow { color: #967325; font-size: 9px; }
+            .card { background: #fcfdfc; border: 1px solid #dce5e0; border-radius: 6px; padding: 11px 13px; }
+            .label { color: #567064; font-size: 8px; }
+            .value { font-size: 12px; color: #102b25; }
+            .section { margin-top: 19px; break-inside: auto; }
+            .section h3 { font-size: 14px; border-bottom: 1.5px solid #b99839; padding-bottom: 7px; margin-bottom: 9px; break-after: avoid; }
+            .section-intro { font-size: 10px; color: #64748b; margin: 0 0 9px; }
+            .section-count { float: right; font-size: 9px; font-weight: 500; color: #64748b; }
+            .summary { border-radius: 6px; border-color: #dce5e0; }
+            table { font-size: 9px; table-layout: auto; }
+            thead { display: table-header-group; }
+            tr { break-inside: avoid; page-break-inside: avoid; }
+            th { background: #153a30; color: #fff; padding: 9px 8px; font-weight: 700; }
+            td { border-color: #e2e8e5; padding: 9px 8px; overflow-wrap: anywhere; line-height: 1.4; }
+            tbody tr:nth-child(even) { background: #f7f9f8; }
+            .file-detail { margin-top: 4px; font-size: 8px; color: #64748b; overflow-wrap: anywhere; }
+            .document-notice { margin-top: 10px; font-size: 9px; background: #f8faf9; border-style: solid; }
+            .footer { font-size: 8px; line-height: 1.5; }
+            @media screen and (max-width: 850px) { .page { width: 100%; min-height: 0; padding: 18px; } .header { flex-wrap: wrap; } .firm { text-align: left; } .grid { grid-template-columns: 1fr 1fr; } }
             @media print {
               body { background: white; }
               .toolbar { display: none; }
-              .page { width: auto; min-height: auto; margin: 0; padding: 12mm; }
+              .page { width: auto; min-height: auto; margin: 0; padding: 12mm; box-shadow: none; }
+              * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
               @page { size: A4; margin: 8mm; }
             }
           </style>
@@ -2057,6 +2097,7 @@ export default function TumulLegalV4() {
               </div>
             </header>
 
+            <div class="document-control"><span>LEGAL PRACTICE RECORD</span><span>CONFIDENTIAL • AUTHORISED ACCESS ONLY</span></div>
             <section class="title">
               <div class="eyebrow">Confidential Legal Matter</div>
               <h2>CASE FILE — ${escapeHtml(selectedMatter.matter_no)}</h2>
@@ -2069,7 +2110,7 @@ export default function TumulLegalV4() {
               <div class="card"><div class="label">Status</div><div class="value">${escapeHtml(selectedMatter.status)}</div></div>
               <div class="card"><div class="label">Priority</div><div class="value">${escapeHtml(selectedMatter.priority)}</div></div>
               <div class="card"><div class="label">Court Date</div><div class="value">${escapeHtml(selectedMatter.court_date ? normalizeDateOnly(selectedMatter.court_date) : "Not scheduled")}</div></div>
-              <div class="card"><div class="label">Estimated Cost</div><div class="value">${escapeHtml(currency(Number(selectedMatter.cost_estimate || 0)))}</div></div>
+              ${permissions.seeFinancials ? `<div class="card"><div class="label">Estimated Cost</div><div class="value">${escapeHtml(currency(Number(selectedMatter.cost_estimate || 0)))}</div></div>` : `<div class="card"><div class="label">Record Classification</div><div class="value">Confidential Matter</div></div>`}
             </section>
 
             <section class="section">
@@ -2096,8 +2137,13 @@ export default function TumulLegalV4() {
             </section>
 
             <section class="section">
-              <h3>Documents</h3>
-              <div class="notice">Uploaded legal documents are not yet attached to the printable case report. Documents will remain individually controlled until secure document storage is added.</div>
+              <h3>Document Register <span class="section-count">${matterDocuments.length} on file</span></h3>
+              <p class="section-intro">Index of documents securely stored against this matter.</p>
+              <table>
+                <thead><tr><th>No.</th><th>Document / File</th><th>Category</th><th>Uploaded By</th><th>Date</th></tr></thead>
+                <tbody>${documentRows}</tbody>
+              </table>
+              <div class="notice document-notice">Supporting files are maintained separately in the secure matter document repository. This report lists the documents but does not embed their contents. Open the matter in Tumul Legal to view or download authorised attachments.</div>
             </section>
 
             <section class="section">
@@ -2110,6 +2156,7 @@ export default function TumulLegalV4() {
 
             <section class="section">
               <h3>Activity History</h3>
+              <p class="section-intro">Activity entries available in the current browser; this is not a complete central audit trail.</p>
               <table>
                 <thead><tr><th>Date / Time</th><th>Action</th><th>User</th><th>Role</th></tr></thead>
                 <tbody>${activityRows}</tbody>
@@ -2117,7 +2164,7 @@ export default function TumulLegalV4() {
             </section>
 
             <footer class="footer">
-              <span>Generated by Tumul Legal Management System</span>
+              <span>TUMUL LEGAL • CONFIDENTIAL CASE RECORD • ${escapeHtml(selectedMatter.matter_no)}</span>
             <span>Printed by: ${escapeHtml(currentUserProfile.name || currentEmail || "Authorized User")} • ${escapeHtml(generatedAt)}</span>
             </footer>
           </main>
@@ -2201,10 +2248,39 @@ export default function TumulLegalV4() {
             .total-row:last-child { border-bottom: 0; color: #0b2b24; font-size: 14px; font-weight: 900; }
             .notice { border: 1px solid #d8dee6; border-radius: 10px; padding: 12px; color: #475569; font-size: 11px; line-height: 1.55; }
             .footer { margin-top: 30px; padding-top: 12px; border-top: 1px solid #d8dee6; color: #64748b; font-size: 9px; display: flex; justify-content: space-between; gap: 20px; }
+            /* Tumul Legal document design system: restrained, legible, A4 ready. */
+            .page { box-shadow: 0 16px 45px rgba(15, 23, 42, .10); }
+            .header { align-items: center; border-bottom: 2px solid #123b32; padding-bottom: 17px; }
+            .brand h1 { font-size: 25px; letter-spacing: .055em; }
+            .brand p { font-size: 10px; letter-spacing: .03em; }
+            .firm { font-size: 9.5px; line-height: 1.55; }
+            .document-control { display: flex; justify-content: space-between; gap: 12px; margin-top: 12px; padding: 8px 10px; background: #f4f7f5; color: #245044; border-left: 3px solid #b99839; font-size: 8px; font-weight: 800; letter-spacing: .12em; }
+            .title { margin-top: 21px; }
+            .title h2 { font-size: 26px; letter-spacing: -.02em; }
+            .eyebrow { color: #967325; font-size: 9px; }
+            .card { background: #fcfdfc; border: 1px solid #dce5e0; border-radius: 6px; padding: 11px 13px; }
+            .label { color: #567064; font-size: 8px; }
+            .value { font-size: 12px; color: #102b25; }
+            .section { margin-top: 19px; break-inside: auto; }
+            .section h3 { font-size: 14px; border-bottom: 1.5px solid #b99839; padding-bottom: 7px; margin-bottom: 9px; break-after: avoid; }
+            .section-intro { font-size: 10px; color: #64748b; margin: 0 0 9px; }
+            .section-count { float: right; font-size: 9px; font-weight: 500; color: #64748b; }
+            .summary { border-radius: 6px; border-color: #dce5e0; }
+            table { font-size: 9px; table-layout: auto; }
+            thead { display: table-header-group; }
+            tr { break-inside: avoid; page-break-inside: avoid; }
+            th { background: #153a30; color: #fff; padding: 9px 8px; font-weight: 700; }
+            td { border-color: #e2e8e5; padding: 9px 8px; overflow-wrap: anywhere; line-height: 1.4; }
+            tbody tr:nth-child(even) { background: #f7f9f8; }
+            .file-detail { margin-top: 4px; font-size: 8px; color: #64748b; overflow-wrap: anywhere; }
+            .document-notice { margin-top: 10px; font-size: 9px; background: #f8faf9; border-style: solid; }
+            .footer { font-size: 8px; line-height: 1.5; }
+            @media screen and (max-width: 850px) { .page { width: 100%; min-height: 0; padding: 18px; } .header { flex-wrap: wrap; } .firm { text-align: left; } .grid { grid-template-columns: 1fr 1fr; } }
             @media print {
               body { background: white; }
               .toolbar { display: none; }
-              .page { width: auto; min-height: auto; margin: 0; padding: 12mm; }
+              .page { width: auto; min-height: auto; margin: 0; padding: 12mm; box-shadow: none; }
+              * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
               @page { size: A4; margin: 8mm; }
             }
           </style>
@@ -2236,6 +2312,7 @@ export default function TumulLegalV4() {
               </div>
             </header>
 
+            <div class="document-control"><span>FINANCIAL RECORD</span><span>ISSUED BY TUMUL LEGAL</span></div>
             <section class="title">
               <div>
                 <div class="eyebrow">Financial Document</div>
@@ -2268,8 +2345,8 @@ export default function TumulLegalV4() {
             </section>
 
             <section class="section">
-              <h3>Document Note</h3>
-              <div class="notice">Thank you for choosing Tumul Legal. This invoice is an official financial document generated from the Tumul Legal Management System.</div>
+              <h3>Payment Summary</h3>
+              <div class="notice">${balance > 0 ? `Outstanding balance: <strong>${escapeHtml(currency(balance))}</strong>. Please quote invoice reference <strong>${escapeHtml(invoice.invoice_no)}</strong> when discussing payment with Tumul Legal.` : `This invoice is recorded as fully paid. Please retain it for your records.`}<br/><br/>Thank you for choosing Tumul Legal. For payment instructions or invoice queries, please contact the firm using the details above.</div>
             </section>
 
             <footer class="footer">
