@@ -2191,6 +2191,19 @@ export default function TumulLegalV4() {
       return;
     }
 
+    // The existing database stores a gross invoice total but no GST treatment.
+    // Ask at print time rather than incorrectly treating every invoice as taxable.
+    const taxChoice = window.prompt(
+      `GST treatment for ${invoice.invoice_no}:\nEnter T if the stored total includes 10% GST, or N if GST is not applicable.\nCancel to stop printing.`,
+      "T"
+    );
+    if (taxChoice === null) return;
+    const gstApplicable = taxChoice.trim().toUpperCase();
+    if (gstApplicable !== "T" && gstApplicable !== "N") {
+      alert("Please enter T or N.");
+      return;
+    }
+
     const escapeHtml = (value: unknown) =>
       String(value ?? "")
         .replace(/&/g, "&amp;")
@@ -2198,177 +2211,79 @@ export default function TumulLegalV4() {
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#039;");
-
-    const invoiceDate = invoice.issued_date || new Date().toISOString().slice(0, 10);
-    const dueDate = invoice.due_date || "Not set";
+    const formatDate = (value?: string | null) => {
+      if (!value) return "Not specified";
+      const d = new Date(`${value.slice(0, 10)}T12:00:00`);
+      return Number.isNaN(d.getTime()) ? value : d.toLocaleDateString("en-GB", {day:"numeric",month:"long",year:"numeric"});
+    };
     const amount = Number(invoice.amount || 0);
-    const amountPaid = Number(invoice.amount_paid || 0);
-    const balance = Math.max(amount - amountPaid, 0);
-    const calculatedStatus = getCalculatedInvoiceStatus(amount, amountPaid);
-    const description = invoice.service_description || "Legal service / professional fee";
-    const generatedAt = new Date().toLocaleString("en-PG");
-
-    const invoiceHtml = `
-      <!doctype html>
-      <html>
-        <head>
-          <meta charset="utf-8" />
-          <title>Tumul Legal Invoice - ${escapeHtml(invoice.invoice_no)}</title>
-          <style>
-            * { box-sizing: border-box; }
-            body { margin: 0; background: #e5e7eb; font-family: Arial, Helvetica, sans-serif; color: #111827; }
-            .toolbar { position: sticky; top: 0; display: flex; justify-content: flex-end; gap: 10px; padding: 14px 24px; background: #e5e7eb; }
-            .toolbar button { border: 1px solid #cbd5e1; border-radius: 10px; padding: 12px 18px; cursor: pointer; font-weight: 700; background: white; }
-            .toolbar .print { background: #d4af37; border-color: #d4af37; color: #071d18; }
-            .page { width: 210mm; min-height: 297mm; margin: 0 auto 24px; background: white; padding: 18mm 16mm; }
-            .header { display: flex; justify-content: space-between; gap: 30px; padding-bottom: 18px; border-bottom: 3px solid #0b2b24; }
-            .brand { display: flex; align-items: center; gap: 18px; }
-            .brand img { width: 105px; height: auto; object-fit: contain; }
-            .brand h1 { margin: 0; color: #0b2b24; font-size: 27px; letter-spacing: .02em; }
-            .brand p { margin: 5px 0 0; color: #9a7614; font-size: 12px; font-weight: 700; }
-            .firm { text-align: right; font-size: 11px; line-height: 1.55; color: #475569; }
-            .title { margin: 26px 0 18px; display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; }
-            .eyebrow { color: #9a7614; font-size: 11px; font-weight: 800; letter-spacing: .18em; text-transform: uppercase; }
-            .title h2 { margin: 7px 0 4px; font-size: 30px; color: #0f172a; }
-            .subtitle { color: #64748b; font-size: 13px; }
-            .status-box { border: 1px solid #d8dee6; border-radius: 10px; padding: 12px 14px; min-width: 205px; font-size: 11px; line-height: 1.7; }
-            .status { font-weight: 800; color: ${calculatedStatus === "Paid" ? "#047857" : calculatedStatus === "Part Paid" ? "#0369a1" : "#b45309"}; }
-            .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 18px 0; }
-            .card { border: 1px solid #d8dee6; border-radius: 10px; padding: 13px 15px; }
-            .label { color: #64748b; text-transform: uppercase; letter-spacing: .12em; font-size: 9px; font-weight: 800; margin-bottom: 6px; }
-            .value { font-size: 13px; font-weight: 700; white-space: pre-wrap; overflow-wrap: anywhere; }
-            .section { margin-top: 24px; break-inside: avoid; }
-            .section h3 { margin: 0 0 10px; padding-bottom: 7px; border-bottom: 2px solid #d4af37; color: #0b2b24; font-size: 17px; }
-            table { width: 100%; border-collapse: collapse; font-size: 10px; }
-            th { background: #0b2b24; color: white; text-align: left; padding: 9px 8px; }
-            td { border: 1px solid #d8dee6; padding: 10px 8px; vertical-align: top; }
-            .right { text-align: right; }
-            .totals { margin: 14px 0 0 auto; width: 48%; border: 1px solid #d8dee6; border-radius: 10px; padding: 10px 14px; }
-            .total-row { display: flex; justify-content: space-between; gap: 20px; padding: 8px 0; border-bottom: 1px solid #e5e7eb; font-size: 11px; }
-            .total-row:last-child { border-bottom: 0; color: #0b2b24; font-size: 14px; font-weight: 900; }
-            .notice { border: 1px solid #d8dee6; border-radius: 10px; padding: 12px; color: #475569; font-size: 11px; line-height: 1.55; }
-            .footer { margin-top: 30px; padding-top: 12px; border-top: 1px solid #d8dee6; color: #64748b; font-size: 9px; display: flex; justify-content: space-between; gap: 20px; }
-            /* Tumul Legal document design system: restrained, legible, A4 ready. */
-            .page { box-shadow: 0 16px 45px rgba(15, 23, 42, .10); }
-            .header { align-items: center; border-bottom: 2px solid #123b32; padding-bottom: 17px; }
-            .brand h1 { font-size: 25px; letter-spacing: .055em; }
-            .brand p { font-size: 10px; letter-spacing: .03em; }
-            .firm { font-size: 9.5px; line-height: 1.55; }
-            .document-control { display: flex; justify-content: space-between; gap: 12px; margin-top: 12px; padding: 8px 10px; background: #f4f7f5; color: #245044; border-left: 3px solid #b99839; font-size: 8px; font-weight: 800; letter-spacing: .12em; }
-            .title { margin-top: 21px; }
-            .title h2 { font-size: 26px; letter-spacing: -.02em; }
-            .eyebrow { color: #967325; font-size: 9px; }
-            .card { background: #fcfdfc; border: 1px solid #dce5e0; border-radius: 6px; padding: 11px 13px; }
-            .label { color: #567064; font-size: 8px; }
-            .value { font-size: 12px; color: #102b25; }
-            .section { margin-top: 19px; break-inside: auto; }
-            .section h3 { font-size: 14px; border-bottom: 1.5px solid #b99839; padding-bottom: 7px; margin-bottom: 9px; break-after: avoid; }
-            .section-intro { font-size: 10px; color: #64748b; margin: 0 0 9px; }
-            .section-count { float: right; font-size: 9px; font-weight: 500; color: #64748b; }
-            .summary { border-radius: 6px; border-color: #dce5e0; }
-            table { font-size: 9px; table-layout: auto; }
-            thead { display: table-header-group; }
-            tr { break-inside: avoid; page-break-inside: avoid; }
-            th { background: #153a30; color: #fff; padding: 9px 8px; font-weight: 700; }
-            td { border-color: #e2e8e5; padding: 9px 8px; overflow-wrap: anywhere; line-height: 1.4; }
-            tbody tr:nth-child(even) { background: #f7f9f8; }
-            .file-detail { margin-top: 4px; font-size: 8px; color: #64748b; overflow-wrap: anywhere; }
-            .document-notice { margin-top: 10px; font-size: 9px; background: #f8faf9; border-style: solid; }
-            .footer { font-size: 8px; line-height: 1.5; }
-            @media screen and (max-width: 850px) { .page { width: 100%; min-height: 0; padding: 18px; } .header { flex-wrap: wrap; } .firm { text-align: left; } .grid { grid-template-columns: 1fr 1fr; } }
-            @media print {
-              body { background: white; }
-              .toolbar { display: none; }
-              .page { width: auto; min-height: auto; margin: 0; padding: 12mm; box-shadow: none; }
-              * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-              @page { size: A4; margin: 8mm; }
-            }
-          </style>
-        </head>
-        <body>
-          <div class="toolbar">
-            <button onclick="window.close()">Close</button>
-            <button class="print" onclick="window.print()">Print / Save PDF</button>
-          </div>
-
-          <main class="page">
-            <header class="header">
-              <div class="brand">
-                <img src="/tumul-logo.png" alt="Tumul Legal" />
-                <div>
-                  <h1>TUMUL LEGAL</h1>
-                  <p>Excellence, Experience, Integrity</p>
-                </div>
-              </div>
-              <div class="firm">
-                <strong>P.O. Box 5856</strong><br/>
-                Boroko, National Capital District<br/>
-                Papua New Guinea<br/><br/>
-                Level 2, Suite 3, Waigani Haus<br/>
-                Section 31, Allotment 5<br/>
-                Mokoraha Road, Waigani, NCD<br/>
-                Phone: +675 78993998<br/>
-                Email: mek@tumullegal.com
-              </div>
-            </header>
-
-            <div class="document-control"><span>FINANCIAL RECORD</span><span>ISSUED BY TUMUL LEGAL</span></div>
-            <section class="title">
-              <div>
-                <div class="eyebrow">Financial Document</div>
-                <h2>INVOICE — ${escapeHtml(invoice.invoice_no || "N/A")}</h2>
-                <div class="subtitle">Professional Legal Services</div>
-              </div>
-              <div class="status-box">
-                <strong>Issued:</strong> ${escapeHtml(invoiceDate)}<br/>
-                <strong>Due:</strong> ${escapeHtml(dueDate)}<br/>
-                <strong>Status:</strong> <span class="status">${escapeHtml(calculatedStatus)}</span>
-              </div>
-            </section>
-
-            <section class="grid">
-              <div class="card"><div class="label">Bill To</div><div class="value">${escapeHtml(invoice.client_name || "Client Name")}</div></div>
-              <div class="card"><div class="label">Matter</div><div class="value">${escapeHtml(invoice.matter_no || "Matter Number")}</div></div>
-            </section>
-
-            <section class="section">
-              <h3>Professional Fees</h3>
-              <table>
-                <thead><tr><th>Description</th><th class="right">Amount</th></tr></thead>
-                <tbody><tr><td>${escapeHtml(description)}</td><td class="right"><strong>${escapeHtml(currency(amount))}</strong></td></tr></tbody>
-              </table>
-              <div class="totals">
-                <div class="total-row"><span>Invoice Total</span><strong>${escapeHtml(currency(amount))}</strong></div>
-                <div class="total-row"><span>Amount Paid</span><strong>${escapeHtml(currency(amountPaid))}</strong></div>
-                <div class="total-row"><span>Balance Due</span><span>${escapeHtml(currency(balance))}</span></div>
-              </div>
-            </section>
-
-            <section class="section">
-              <h3>Payment Summary</h3>
-              <div class="notice">${balance > 0 ? `Outstanding balance: <strong>${escapeHtml(currency(balance))}</strong>. Please quote invoice reference <strong>${escapeHtml(invoice.invoice_no)}</strong> when discussing payment with Tumul Legal.` : `This invoice is recorded as fully paid. Please retain it for your records.`}<br/><br/>Thank you for choosing Tumul Legal. For payment instructions or invoice queries, please contact the firm using the details above.</div>
-            </section>
-
-            <footer class="footer">
-              <span>Tumul Legal • Financial Document • Generated by Tumul Legal Management System</span>
-              <span>Printed by: ${escapeHtml(currentUserProfile.name || currentEmail || "Authorized User")} • ${escapeHtml(generatedAt)}</span>
-            </footer>
-          </main>
-        </body>
-      </html>
-    `;
-
-    const printWindow = window.open("", "_blank", "width=1000,height=1100");
-    if (!printWindow) {
-      alert("Popup blocked. Please allow popups and try again.");
-      return;
-    }
-
-    printWindow.document.open();
-    printWindow.document.write(invoiceHtml);
-    printWindow.document.close();
-    printWindow.focus();
-    logActivity(`Opened invoice ${invoice.invoice_no} for printing`, "Billing");
+    const paid = Number(invoice.amount_paid || 0);
+    const balance = Math.max(0, amount - paid);
+    const taxable = gstApplicable === "T";
+    const net = taxable ? Math.round((amount / 1.1) * 100) / 100 : amount;
+    const gst = taxable ? Math.round((amount - net) * 100) / 100 : 0;
+    const description = invoice.service_description || "Professional legal services";
+    const date = formatDate(invoice.issued_date);
+    const due = formatDate(invoice.due_date);
+    const reference = invoice.invoice_no || "Not specified";
+    const safeCurrency = (n: number) => escapeHtml(currency(n));
+    const html = `<!doctype html><html><head><meta charset="utf-8" />
+      <title>Tumul Legal - ${escapeHtml(reference)}</title>
+      <style>
+        *{box-sizing:border-box}body{margin:0;background:#e8ecea;color:#202a26;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:1.55}
+        .toolbar{position:sticky;top:0;background:#e8ecea;padding:12px;text-align:center;z-index:5}
+        button{padding:10px 18px;margin:0 5px;border:0;border-radius:6px;background:#21553e;color:white;cursor:pointer;font-weight:700}
+        .page{width:210mm;min-height:297mm;background:white;margin:0 auto 18px;padding:18mm 19mm;position:relative;box-shadow:0 6px 25px #0002;break-after:page}
+        .page:last-child{break-after:auto}.top{display:flex;justify-content:space-between;gap:20px;border-bottom:2px solid #477b51;padding-bottom:14px;margin-bottom:28px}
+        .logo{font-family:Georgia,serif;color:#397348;font-size:29px;letter-spacing:3px;font-weight:bold}.logo span{color:#151515}
+        .contact{text-align:right;font-size:10px;color:#4b5951}.contact strong{color:#203c2b}
+        .eyebrow{color:#397348;text-transform:uppercase;letter-spacing:2px;font-size:10px;font-weight:700}
+        h1{font-size:25px;letter-spacing:.8px;margin:4px 0 18px;color:#173c2a}h2{font-size:15px;color:#173c2a;margin:25px 0 10px}
+        .client{margin:24px 0}.subject{font-weight:bold;font-size:14px;margin:22px 0 15px}
+        .muted{color:#647168}.right{text-align:right}.meta{display:flex;justify-content:space-between;gap:20px;margin:18px 0 24px}
+        .pill{background:#edf4ef;border-left:3px solid #397348;padding:11px 15px}
+        table{border-collapse:collapse;width:100%;margin-top:20px;font-size:11px}th{background:#edf4ef;color:#173c2a;text-align:left;border-bottom:2px solid #397348;padding:11px 9px}td{padding:12px 9px;border-bottom:1px solid #dbe4de;vertical-align:top}
+        .totals{width:58%;margin:16px 0 25px auto}.totals div{display:flex;justify-content:space-between;padding:7px 4px;border-bottom:1px solid #dce4de}.totals .grand{font-weight:bold;color:#173c2a;font-size:15px;border-top:2px solid #397348}
+        .bank{background:#f6f8f6;padding:16px;margin-top:25px}.foot{position:absolute;bottom:14mm;left:19mm;right:19mm;border-top:1px solid #b7cabc;padding-top:9px;font-size:9px;color:#66776b;display:flex;justify-content:space-between}
+        .signature{margin-top:40px}.small{font-size:10px;color:#5e6c61}.highlight{font-weight:bold;color:#173c2a}
+        @media screen and (max-width:850px){.page{width:100%;min-height:0;padding:25px}.foot{position:static;margin-top:50px}}
+        @media print{@page{size:A4;margin:0}body{background:white}.toolbar{display:none}.page{margin:0;box-shadow:none;width:210mm;min-height:297mm;break-after:page;-webkit-print-color-adjust:exact;print-color-adjust:exact}.page:last-child{break-after:auto}}
+      </style></head><body>
+      <div class="toolbar"><button onclick="window.print()">Print / Save PDF</button><button onclick="window.close()">Close</button></div>
+      <section class="page">
+        <header class="top"><div><div class="logo">Tumul<span>Legal</span></div><div class="small">Private legal practice · Papua New Guinea</div></div>
+        <div class="contact"><strong>Level 2, Suite 3, Waigani Haus</strong><br/>Section 31, Allotment 5, Mokoraha Road<br/>Waigani, National Capital District<br/>PO Box 5856, Boroko, NCD 121<br/>+675 7899 3998 · mek@tumullegal.com</div></header>
+        <div class="eyebrow">Private &amp; Confidential</div><div class="right">${escapeHtml(date)}</div>
+        <div class="client"><strong>${escapeHtml(invoice.client_name)}</strong></div>
+        <p>Dear Client,</p><p class="subject">Re: ${escapeHtml(description)}</p>
+        <p>Please find enclosed our invoice <strong>${escapeHtml(reference)}</strong> for professional legal services relating to the above matter.</p>
+        <p>Our total fees for services rendered amount to <strong>${safeCurrency(amount)}</strong>${taxable ? ", inclusive of GST" : ""}.</p>
+        <p>If you have any questions concerning this invoice, please contact our office. We thank you for your continued instructions.</p>
+        <div class="signature">Yours sincerely,<br/><br/><br/><strong>Mek Tumul</strong><br/>Principal<br/>Tumul Legal</div>
+        <div class="foot"><span>TUMUL LEGAL · PRIVATE &amp; CONFIDENTIAL</span><span>Cover Letter · ${escapeHtml(reference)}</span></div>
+      </section>
+      <section class="page">
+        <header class="top"><div><div class="logo">Tumul<span>Legal</span></div><div class="small">TIN: 500879475</div></div>
+        <div class="contact">Level 2, Suite 3, Waigani Haus<br/>Mokoraha Road, Waigani, NCD<br/>+675 7899 3998 · mek@tumullegal.com</div></header>
+        <div class="eyebrow">Client Billing</div><h1>${taxable ? "TAX INVOICE" : "INVOICE"}</h1>
+        <div class="meta"><div><div class="small">BILL TO</div><strong>${escapeHtml(invoice.client_name)}</strong><br/><span class="small">Matter: ${escapeHtml(invoice.matter_no)}</span></div>
+        <div class="right"><strong>Invoice No. ${escapeHtml(reference)}</strong><br/>Issued: ${escapeHtml(date)}<br/>Due: ${escapeHtml(due)}</div></div>
+        <div class="pill"><strong>Matter description</strong><br/>${escapeHtml(description)}</div>
+        <table><thead><tr><th>Professional Services</th><th class="right">Value (PGK)</th></tr></thead>
+        <tbody><tr><td>${escapeHtml(description)}</td><td class="right">${safeCurrency(net)}</td></tr></tbody></table>
+        <div class="totals"><div><span>Professional fees</span><span>${safeCurrency(net)}</span></div>
+        <div><span>GST ${taxable ? "(10%)" : "(not applicable)"}</span><span>${safeCurrency(gst)}</span></div>
+        <div class="grand"><span>Invoice total</span><span>${safeCurrency(amount)}</span></div>
+        <div><span>Amount received</span><span>${safeCurrency(paid)}</span></div>
+        <div class="grand"><span>Balance payable</span><span>${safeCurrency(balance)}</span></div></div>
+        <div class="bank"><strong>PAYMENT INSTRUCTIONS</strong><br/>Bank: Kina Bank Limited · Waigani Cameron Road Branch<br/>Account name: Tumul Legal<br/>Account number: 30582919 · BSB: 028-021<br/><br/>Please quote invoice number <strong>${escapeHtml(reference)}</strong> and send remittance advice to mek@tumullegal.com.</div>
+        <p class="small">Payment terms: ${invoice.due_date ? `Payment due ${escapeHtml(due)}.` : "Please confirm the payment due date with Tumul Legal."} GST applies only where indicated above.</p>
+        <div class="foot"><span>TUMUL LEGAL · TIN 500879475</span><span>Invoice · ${escapeHtml(reference)}</span></div>
+      </section></body></html>`;
+    const win = window.open("", "_blank", "width=1000,height=1100");
+    if (!win) { alert("Popup blocked. Please allow popups and try again."); return; }
+    win.document.open(); win.document.write(html); win.document.close(); win.focus();
+    logActivity(`Opened official-format invoice ${reference} for printing`, "Billing");
   };
 
   const handleUpdateInvoicePayment = async (invoice: Invoice) => {
