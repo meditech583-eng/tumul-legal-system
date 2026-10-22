@@ -2272,9 +2272,9 @@ export default function TumulLegalV4() {
         .toolbar{position:sticky;top:0;background:#e8ecea;padding:12px;text-align:center;z-index:5}
         button{padding:10px 18px;margin:0 5px;border:0;border-radius:6px;background:#21553e;color:white;cursor:pointer;font-weight:700}
         .page{width:210mm;min-height:297mm;background:white;margin:0 auto 18px;padding:18mm 19mm;position:relative;box-shadow:0 6px 25px #0002;break-after:page}
-        .page:last-child{break-after:auto}.top{display:flex;justify-content:space-between;gap:20px;border-bottom:2px solid #477b51;padding-bottom:14px;margin-bottom:28px}
-        .logo{display:flex;align-items:center;gap:12px}.logo img{height:52px;width:70px;object-fit:contain}.logo-name{font-family:Georgia,serif;color:#255d3c;font-size:23px;letter-spacing:1px;font-weight:bold}.logo-tag{font-size:9px;color:#8b712b;letter-spacing:.5px}
-        .contact{text-align:right;font-size:10px;color:#4b5951}.contact strong{color:#203c2b}
+        .page:last-child{break-after:auto}.top{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:start;gap:14px;border-bottom:2px solid #477b51;padding-bottom:14px;margin-bottom:28px}.top>div{min-width:0}
+        .logo{display:flex;align-items:center;gap:9px;min-width:0}.logo img{display:block;flex:0 0 47px;width:47px;height:47px;object-fit:contain}.logo>div{min-width:0}.logo-name{font-family:Georgia,serif;color:#255d3c;font-size:17px;letter-spacing:0;font-weight:bold;white-space:nowrap;line-height:1.2}.logo-tag{font-size:8px;color:#8b712b;letter-spacing:0;white-space:nowrap;line-height:1.4}
+        .contact{text-align:right;font-size:9px;color:#4b5951;overflow-wrap:anywhere;line-height:1.5}.contact strong{color:#203c2b}
         .eyebrow{color:#397348;text-transform:uppercase;letter-spacing:2px;font-size:10px;font-weight:700}
         h1{font-size:25px;letter-spacing:.8px;margin:4px 0 18px;color:#173c2a}h2{font-size:15px;color:#173c2a;margin:25px 0 10px}
         .client{margin:24px 0}.subject{font-weight:bold;font-size:14px;margin:22px 0 15px}
