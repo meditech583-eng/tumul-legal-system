@@ -57,6 +57,17 @@ type Client = {
   source: string;
 };
 
+type InvoiceDetails = {
+  gst_mode: "inclusive" | "none";
+  billing_from: string;
+  billing_to: string;
+  recipient_name: string;
+  recipient_address: string;
+  cover_note: string;
+  billing_type: "fixed" | "hourly";
+  work_items: {date:string;operator:string;description:string;rate:number;minutes:number}[];
+};
+
 type Invoice = {
   id: number;
   invoice_no: string;
@@ -289,6 +300,7 @@ export default function TumulLegalV4() {
   const [matters, setMatters] = useState<Matter[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [invoiceDetails, setInvoiceDetails] = useState<Record<number, InvoiceDetails>>({});
   const [staffUsers, setStaffUsers] = useState<StaffUser[]>([]);
   const [activityLog, setActivityLog] = useState<ActivityItem[]>([]);
 
@@ -332,6 +344,12 @@ export default function TumulLegalV4() {
     status: "Unpaid" as InvoiceStatus,
     due_date: "",
     issued_date: "",
+  });
+  const [invoiceExtra, setInvoiceExtra] = useState({
+    gst_mode: "inclusive" as "inclusive" | "none",
+    billing_from: "", billing_to: "", recipient_name: "", recipient_address: "",
+    cover_note: "", billing_type: "fixed" as "fixed" | "hourly",
+    work_items: [{date:"",operator:"",description:"",rate:0,minutes:0}],
   });
 
   const [staffForm, setStaffForm] = useState({
@@ -493,7 +511,16 @@ export default function TumulLegalV4() {
 
     if (!mattersRes.error) setMatters((mattersRes.data as Matter[]) || []);
     if (!clientsRes.error) setClients((clientsRes.data as Client[]) || []);
-    if (!invoicesRes.error) setInvoices((invoicesRes.data as Invoice[]) || []);
+    if (!invoicesRes.error) {
+      const invoiceRows = (invoicesRes.data as Invoice[]) || [];
+      setInvoices(invoiceRows);
+      const detailsRes = await supabase.from("tumul_invoice_details").select("invoice_id, details");
+      if (!detailsRes.error) {
+        const lookup: Record<number, InvoiceDetails> = {};
+        for (const row of detailsRes.data || []) lookup[row.invoice_id] = row.details as InvoiceDetails;
+        setInvoiceDetails(lookup);
+      } else console.warn("Invoice details unavailable; apply the accompanying SQL migration.", detailsRes.error.message);
+    }
     // Keep the staff profile returned by the secure verify-staff API.
     // Under RLS, a normal staff user's browser query may legitimately return
     // zero staff_users rows. Do not replace the verified profile with [].
@@ -1522,7 +1549,7 @@ export default function TumulLegalV4() {
     const paidAmount = Number(invoiceForm.amount_paid || 0);
     const calculatedStatus = getCalculatedInvoiceStatus(invoiceAmount, paidAmount);
 
-    const { error } = await supabase.from("invoices").insert({
+    const { data: createdInvoice, error } = await supabase.from("invoices").insert({
       invoice_no: invoiceForm.invoice_no,
       client_name: invoiceForm.client_name,
       matter_no: invoiceForm.matter_no,
@@ -1534,13 +1561,21 @@ export default function TumulLegalV4() {
       due_date: invoiceForm.due_date || null,
       issued_date:
         invoiceForm.issued_date || new Date().toISOString().slice(0, 10),
-    });
+    }).select("id").single();
 
     if (error) {
       alert(error.message);
       return;
     }
 
+    if (createdInvoice?.id) {
+      const { error: detailsError } = await supabase.from("tumul_invoice_details").insert({
+        invoice_id: createdInvoice.id,
+        details: {...invoiceExtra, work_items: invoiceExtra.work_items.filter(item => item.description.trim())},
+      });
+      if (detailsError) alert("Invoice saved, but its additional billing details could not be saved. Check the SQL migration and access policies: " + detailsError.message);
+    }
+    setInvoiceExtra({gst_mode:"inclusive",billing_from:"",billing_to:"",recipient_name:"",recipient_address:"",cover_note:"",billing_type:"fixed",work_items:[{date:"",operator:"",description:"",rate:0,minutes:0}]});
     logActivity(`Created invoice ${invoiceForm.invoice_no}`, "Billing");
 
     setInvoiceForm({
@@ -2191,19 +2226,15 @@ export default function TumulLegalV4() {
       return;
     }
 
-    // The existing database stores a gross invoice total but no GST treatment.
-    // Ask at print time rather than incorrectly treating every invoice as taxable.
-    const taxChoice = window.prompt(
-      `GST treatment for ${invoice.invoice_no}:\nEnter T if the stored total includes 10% GST, or N if GST is not applicable.\nCancel to stop printing.`,
-      "T"
-    );
-    if (taxChoice === null) return;
-    const gstApplicable = taxChoice.trim().toUpperCase();
-    if (gstApplicable !== "T" && gstApplicable !== "N") {
-      alert("Please enter T or N.");
-      return;
+    const details = invoiceDetails[invoice.id];
+    // Existing invoices without saved details use a print-time choice.
+    let gstApplicable = details?.gst_mode === "none" ? "N" : "T";
+    if (!details) {
+      const answer = window.prompt(`GST treatment for existing invoice ${invoice.invoice_no}: T = GST included; N = no GST.`, "T");
+      if (answer === null) return;
+      gstApplicable = answer.trim().toUpperCase();
+      if (gstApplicable !== "T" && gstApplicable !== "N") {alert("Enter T or N.");return;}
     }
-
     const escapeHtml = (value: unknown) =>
       String(value ?? "")
         .replace(/&/g, "&amp;")
@@ -2227,6 +2258,13 @@ export default function TumulLegalV4() {
     const due = formatDate(invoice.due_date);
     const reference = invoice.invoice_no || "Not specified";
     const safeCurrency = (n: number) => escapeHtml(currency(n));
+    const recipient = details?.recipient_name?.trim() || "Client";
+    const address = details?.recipient_address?.trim() || "";
+    const addressHtml = escapeHtml(address).replace(/\n/g,"<br/>");
+    const period = details?.billing_from || details?.billing_to ? `For the period ${formatDate(details.billing_from)} to ${formatDate(details.billing_to)}` : "";
+    const entries = (details?.work_items || []).filter(x=>x.description?.trim());
+    const entryTotal = entries.reduce((sum,x)=>sum+(Number(x.rate)||0)*(Number(x.minutes)||0)/60,0);
+    const entryRows = entries.map(x=>`<tr><td>${escapeHtml(formatDate(x.date))}</td><td>${escapeHtml(x.operator)}</td><td>${escapeHtml(x.description)}</td><td class="right">${safeCurrency(Number(x.rate)||0)}</td><td class="right">${escapeHtml(x.minutes)} min</td><td class="right">${safeCurrency((Number(x.rate)||0)*(Number(x.minutes)||0)/60)}</td></tr>`).join("");
     const html = `<!doctype html><html><head><meta charset="utf-8" />
       <title>Tumul Legal - ${escapeHtml(reference)}</title>
       <style>
@@ -2235,7 +2273,7 @@ export default function TumulLegalV4() {
         button{padding:10px 18px;margin:0 5px;border:0;border-radius:6px;background:#21553e;color:white;cursor:pointer;font-weight:700}
         .page{width:210mm;min-height:297mm;background:white;margin:0 auto 18px;padding:18mm 19mm;position:relative;box-shadow:0 6px 25px #0002;break-after:page}
         .page:last-child{break-after:auto}.top{display:flex;justify-content:space-between;gap:20px;border-bottom:2px solid #477b51;padding-bottom:14px;margin-bottom:28px}
-        .logo{font-family:Georgia,serif;color:#397348;font-size:29px;letter-spacing:3px;font-weight:bold}.logo span{color:#151515}
+        .logo{display:flex;align-items:center;gap:12px}.logo img{height:52px;width:70px;object-fit:contain}.logo-name{font-family:Georgia,serif;color:#255d3c;font-size:23px;letter-spacing:1px;font-weight:bold}.logo-tag{font-size:9px;color:#8b712b;letter-spacing:.5px}
         .contact{text-align:right;font-size:10px;color:#4b5951}.contact strong{color:#203c2b}
         .eyebrow{color:#397348;text-transform:uppercase;letter-spacing:2px;font-size:10px;font-weight:700}
         h1{font-size:25px;letter-spacing:.8px;margin:4px 0 18px;color:#173c2a}h2{font-size:15px;color:#173c2a;margin:25px 0 10px}
@@ -2251,24 +2289,24 @@ export default function TumulLegalV4() {
       </style></head><body>
       <div class="toolbar"><button onclick="window.print()">Print / Save PDF</button><button onclick="window.close()">Close</button></div>
       <section class="page">
-        <header class="top"><div><div class="logo">Tumul<span>Legal</span></div><div class="small">Private legal practice · Papua New Guinea</div></div>
+        <header class="top"><div><div class="logo"><img src="${escapeHtml(window.location.origin)}/tumul-invoice-mark.png" alt="Tumul Legal TL monogram"/><div><div class="logo-name">TUMUL LEGAL</div><div class="logo-tag">Excellence, Experience, Integrity</div></div></div><div class="small">Private legal practice · Papua New Guinea</div></div>
         <div class="contact"><strong>Level 2, Suite 3, Waigani Haus</strong><br/>Section 31, Allotment 5, Mokoraha Road<br/>Waigani, National Capital District<br/>PO Box 5856, Boroko, NCD 121<br/>+675 7899 3998 · mek@tumullegal.com</div></header>
         <div class="eyebrow">Private &amp; Confidential</div><div class="right">${escapeHtml(date)}</div>
-        <div class="client"><strong>${escapeHtml(invoice.client_name)}</strong></div>
-        <p>Dear Client,</p><p class="subject">Re: ${escapeHtml(description)}</p>
-        <p>Please find enclosed our invoice <strong>${escapeHtml(reference)}</strong> for professional legal services relating to the above matter.</p>
+        <div class="client"><strong>${escapeHtml(invoice.client_name)}</strong>${addressHtml ? `<br/>${addressHtml}` : ""}</div>
+        <p>Dear ${escapeHtml(recipient)},</p><p class="subject">Re: ${escapeHtml(description)}</p>
+        ${details?.cover_note ? `<p>${escapeHtml(details.cover_note)}</p>` : ""}<p>Please find enclosed our invoice <strong>${escapeHtml(reference)}</strong> for professional legal services relating to the above matter.</p>
         <p>Our total fees for services rendered amount to <strong>${safeCurrency(amount)}</strong>${taxable ? ", inclusive of GST" : ""}.</p>
         <p>If you have any questions concerning this invoice, please contact our office. We thank you for your continued instructions.</p>
         <div class="signature">Yours sincerely,<br/><br/><br/><strong>Mek Tumul</strong><br/>Principal<br/>Tumul Legal</div>
         <div class="foot"><span>TUMUL LEGAL · PRIVATE &amp; CONFIDENTIAL</span><span>Cover Letter · ${escapeHtml(reference)}</span></div>
       </section>
       <section class="page">
-        <header class="top"><div><div class="logo">Tumul<span>Legal</span></div><div class="small">TIN: 500879475</div></div>
+        <header class="top"><div><div class="logo"><img src="${escapeHtml(window.location.origin)}/tumul-invoice-mark.png" alt="Tumul Legal TL monogram"/><div><div class="logo-name">TUMUL LEGAL</div><div class="logo-tag">Excellence, Experience, Integrity</div></div></div><div class="small">TIN: 500879475</div></div>
         <div class="contact">Level 2, Suite 3, Waigani Haus<br/>Mokoraha Road, Waigani, NCD<br/>+675 7899 3998 · mek@tumullegal.com</div></header>
         <div class="eyebrow">Client Billing</div><h1>${taxable ? "TAX INVOICE" : "INVOICE"}</h1>
         <div class="meta"><div><div class="small">BILL TO</div><strong>${escapeHtml(invoice.client_name)}</strong><br/><span class="small">Matter: ${escapeHtml(invoice.matter_no)}</span></div>
         <div class="right"><strong>Invoice No. ${escapeHtml(reference)}</strong><br/>Issued: ${escapeHtml(date)}<br/>Due: ${escapeHtml(due)}</div></div>
-        <div class="pill"><strong>Matter description</strong><br/>${escapeHtml(description)}</div>
+        <div class="pill"><strong>Matter description</strong><br/>${escapeHtml(description)}${period ? `<br/><span class="small">${escapeHtml(period)}</span>` : ""}</div>
         <table><thead><tr><th>Professional Services</th><th class="right">Value (PGK)</th></tr></thead>
         <tbody><tr><td>${escapeHtml(description)}</td><td class="right">${safeCurrency(net)}</td></tr></tbody></table>
         <div class="totals"><div><span>Professional fees</span><span>${safeCurrency(net)}</span></div>
@@ -2279,7 +2317,17 @@ export default function TumulLegalV4() {
         <div class="bank"><strong>PAYMENT INSTRUCTIONS</strong><br/>Bank: Kina Bank Limited · Waigani Cameron Road Branch<br/>Account name: Tumul Legal<br/>Account number: 30582919 · BSB: 028-021<br/><br/>Please quote invoice number <strong>${escapeHtml(reference)}</strong> and send remittance advice to mek@tumullegal.com.</div>
         <p class="small">Payment terms: ${invoice.due_date ? `Payment due ${escapeHtml(due)}.` : "Please confirm the payment due date with Tumul Legal."} GST applies only where indicated above.</p>
         <div class="foot"><span>TUMUL LEGAL · TIN 500879475</span><span>Invoice · ${escapeHtml(reference)}</span></div>
-      </section></body></html>`;
+      </section>
+      ${entries.length ? `<section class="page">
+        <header class="top"><div><div class="logo"><img src="${escapeHtml(window.location.origin)}/tumul-invoice-mark.png" alt="Tumul Legal TL monogram"/><div><div class="logo-name">TUMUL LEGAL</div><div class="logo-tag">Excellence, Experience, Integrity</div></div></div><div class="small">Professional services detail</div></div><div class="contact">Invoice ${escapeHtml(reference)}<br/>Matter ${escapeHtml(invoice.matter_no)}</div></header>
+        <div class="eyebrow">Billing attachment</div><h1>PROFESSIONAL SERVICES DETAIL</h1>
+        <p><strong>${escapeHtml(invoice.client_name)}</strong><br/>${escapeHtml(description)}</p>
+        ${period ? `<p class="small">${escapeHtml(period)}</p>` : ""}
+        <table><thead><tr><th>Date</th><th>Operator</th><th>Work performed</th><th class="right">Rate/hr</th><th class="right">Time</th><th class="right">Value</th></tr></thead><tbody>${entryRows}</tbody></table>
+        <div class="totals"><div class="grand"><span>Itemised work total</span><span>${safeCurrency(entryTotal)}</span></div><div><span>Invoice professional fees</span><span>${safeCurrency(net)}</span></div></div>
+        ${Math.abs(entryTotal-net)>0.02 ? `<p class="small"><strong>Review required:</strong> Itemised entries do not match the invoice professional fees. Verify before sending.</p>` : ""}
+        <div class="foot"><span>TUMUL LEGAL · CONFIDENTIAL</span><span>Attachment · ${escapeHtml(reference)}</span></div>
+      </section>` : ""}</body></html>`;
     const win = window.open("", "_blank", "width=1000,height=1100");
     if (!win) { alert("Popup blocked. Please allow popups and try again."); return; }
     win.document.open(); win.document.write(html); win.document.close(); win.focus();
@@ -3823,6 +3871,30 @@ export default function TumulLegalV4() {
                     className={inputClass}
                     disabled={!permissions.addInvoice}
                   />
+                  <div className="col-span-full rounded-xl border border-white/10 p-4 space-y-3">
+                    <h4 className="font-semibold text-white">Official invoice details</h4>
+                    <select className={inputClass} value={invoiceExtra.gst_mode} onChange={e=>setInvoiceExtra(v=>({...v,gst_mode:e.target.value as "inclusive"|"none"}))}>
+                      <option value="inclusive">Total includes 10% GST</option><option value="none">GST not applicable</option>
+                    </select>
+                    <select className={inputClass} value={invoiceExtra.billing_type} onChange={e=>setInvoiceExtra(v=>({...v,billing_type:e.target.value as "fixed"|"hourly"}))}>
+                      <option value="fixed">Fixed / agreed professional fee</option><option value="hourly">Time-based professional fees</option>
+                    </select>
+                    <input className={inputClass} placeholder="Recipient name / salutation" value={invoiceExtra.recipient_name} onChange={e=>setInvoiceExtra(v=>({...v,recipient_name:e.target.value}))}/>
+                    <textarea className={inputClass} placeholder="Client postal / office address" value={invoiceExtra.recipient_address} onChange={e=>setInvoiceExtra(v=>({...v,recipient_address:e.target.value}))}/>
+                    <label className="text-xs text-slate-300">Billing period from / to</label>
+                    <div className="grid grid-cols-2 gap-2"><input type="date" className={inputClass} value={invoiceExtra.billing_from} onChange={e=>setInvoiceExtra(v=>({...v,billing_from:e.target.value}))}/><input type="date" className={inputClass} value={invoiceExtra.billing_to} onChange={e=>setInvoiceExtra(v=>({...v,billing_to:e.target.value}))}/></div>
+                    <textarea className={inputClass} placeholder="Optional personalised cover letter summary" value={invoiceExtra.cover_note} onChange={e=>setInvoiceExtra(v=>({...v,cover_note:e.target.value}))}/>
+                    <h4 className="font-semibold text-white">Professional services detail (optional)</h4>
+                    {invoiceExtra.work_items.map((item,index)=><div key={index} className="grid grid-cols-2 gap-2 rounded-lg border border-white/10 p-2">
+                      <input type="date" className={inputClass} value={item.date} onChange={e=>setInvoiceExtra(v=>({...v,work_items:v.work_items.map((x,i)=>i===index?{...x,date:e.target.value}:x)}))}/>
+                      <input className={inputClass} placeholder="Lawyer / operator" value={item.operator} onChange={e=>setInvoiceExtra(v=>({...v,work_items:v.work_items.map((x,i)=>i===index?{...x,operator:e.target.value}:x)}))}/>
+                      <textarea className={`${inputClass} col-span-2`} placeholder="Work performed" value={item.description} onChange={e=>setInvoiceExtra(v=>({...v,work_items:v.work_items.map((x,i)=>i===index?{...x,description:e.target.value}:x)}))}/>
+                      <input type="number" min="0" className={inputClass} placeholder="Hourly rate (K)" value={item.rate||""} onChange={e=>setInvoiceExtra(v=>({...v,work_items:v.work_items.map((x,i)=>i===index?{...x,rate:Number(e.target.value)}:x)}))}/>
+                      <input type="number" min="0" className={inputClass} placeholder="Minutes worked" value={item.minutes||""} onChange={e=>setInvoiceExtra(v=>({...v,work_items:v.work_items.map((x,i)=>i===index?{...x,minutes:Number(e.target.value)}:x)}))}/>
+                    </div>)}
+                    <button type="button" className={secondaryButton} onClick={()=>setInvoiceExtra(v=>({...v,work_items:[...v.work_items,{date:"",operator:"",description:"",rate:0,minutes:0}]}))}>+ Add work entry</button>
+                    <p className="text-xs text-slate-400">For hourly work, verify that the itemised fees match the invoice amount before issuing. The existing amount field remains the official invoice total.</p>
+                  </div>
                   <button
                     onClick={handleAddInvoice}
                     disabled={!permissions.addInvoice}
