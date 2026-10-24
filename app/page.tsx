@@ -58,7 +58,9 @@ type Client = {
 };
 
 type InvoiceDetails = {
-  gst_mode: "inclusive" | "none";
+  gst_mode: "inclusive" | "exclusive" | "none";
+  amount_mode?: "automatic" | "manual";
+  manual_fees?: number;
   billing_from: string;
   billing_to: string;
   recipient_name: string;
@@ -347,7 +349,9 @@ export default function TumulLegalV4() {
   });
   const [editingInvoiceId, setEditingInvoiceId] = useState<number | null>(null);
   const [invoiceExtra, setInvoiceExtra] = useState({
-    gst_mode: "inclusive" as "inclusive" | "none",
+    gst_mode: "exclusive" as "inclusive" | "exclusive" | "none",
+    amount_mode: "automatic" as "automatic" | "manual",
+    manual_fees: 0,
     billing_from: "", billing_to: "", recipient_name: "", recipient_address: "",
     cover_note: "", billing_type: "fixed" as "fixed" | "hourly",
     work_items: [{date:"",operator:"",description:"",rate:0,minutes:0}],
@@ -1539,7 +1543,9 @@ export default function TumulLegalV4() {
       service_description:invoice.service_description || "Legal service / professional fee",
       status:invoice.status,due_date:invoice.due_date?.slice(0,10) || "",issued_date:invoice.issued_date?.slice(0,10) || ""});
     const details = invoiceDetails[invoice.id];
-    setInvoiceExtra({gst_mode:details?.gst_mode || "inclusive",billing_from:details?.billing_from || "",
+    setInvoiceExtra({gst_mode:details?.gst_mode || "inclusive",
+      amount_mode:details?.amount_mode || "manual",
+      manual_fees:details?.manual_fees ?? (details?.gst_mode === "none" ? invoice.amount : (invoice.amount / 1.1)),billing_from:details?.billing_from || "",
       billing_to:details?.billing_to || "",recipient_name:details?.recipient_name || "",
       recipient_address:details?.recipient_address || "",cover_note:details?.cover_note || "",
       billing_type:details?.billing_type || "fixed",
@@ -1551,9 +1557,21 @@ export default function TumulLegalV4() {
     setEditingInvoiceId(null);
     setInvoiceForm({invoice_no:"",client_name:"",matter_no:"",amount:"",amount_paid:"",
       service_description:"Legal service / professional fee",status:"Unpaid",due_date:"",issued_date:""});
-    setInvoiceExtra({gst_mode:"inclusive",billing_from:"",billing_to:"",recipient_name:"",recipient_address:"",
+    setInvoiceExtra({gst_mode:"exclusive",amount_mode:"automatic",manual_fees:0,billing_from:"",billing_to:"",recipient_name:"",recipient_address:"",
       cover_note:"",billing_type:"fixed",work_items:[{date:"",operator:"",description:"",rate:0,minutes:0}]});
   };
+
+  const invoiceItemisedFees = invoiceExtra.work_items.reduce((sum, item) =>
+    sum + (Number(item.rate) || 0) * (Number(item.minutes) || 0) / 60, 0);
+  const invoiceProfessionalFees = invoiceExtra.amount_mode === "manual"
+    ? Number(invoiceExtra.manual_fees || 0)
+    : invoiceItemisedFees;
+  const invoiceGst = invoiceExtra.gst_mode === "none" ? 0
+    : invoiceExtra.gst_mode === "inclusive"
+      ? Math.round((invoiceProfessionalFees - invoiceProfessionalFees / 1.1) * 100) / 100
+      : Math.round(invoiceProfessionalFees * 0.1 * 100) / 100;
+  const invoiceCalculatedTotal = Math.round((invoiceProfessionalFees +
+    (invoiceExtra.gst_mode === "exclusive" ? invoiceGst : 0)) * 100) / 100;
 
   const handleAddInvoice = async () => {
     if (!permissions.addInvoice) {
@@ -1565,13 +1583,14 @@ export default function TumulLegalV4() {
       !invoiceForm.invoice_no ||
       !invoiceForm.client_name ||
       !invoiceForm.matter_no ||
-      !invoiceForm.amount
+      invoiceCalculatedTotal <= 0
     ) {
       alert("Please fill in invoice number, client, matter number and amount.");
       return;
     }
 
-    const invoiceAmount = Number(invoiceForm.amount || 0);
+    const invoiceAmount = invoiceCalculatedTotal;
+    if (!Number.isFinite(invoiceAmount) || invoiceAmount <= 0) { alert("Enter a valid professional services amount."); return; }
     const paidAmount = Number(invoiceForm.amount_paid || 0);
     if (!Number.isFinite(invoiceAmount) || invoiceAmount <= 0 || !Number.isFinite(paidAmount) || paidAmount < 0 || paidAmount > invoiceAmount) {
       alert("Enter a valid invoice total and payment between zero and the invoice total."); return;
@@ -1609,7 +1628,7 @@ export default function TumulLegalV4() {
       const { error: detailsError } = await supabase.from("tumul_invoice_details").upsert(detailsPayload,{onConflict:"invoice_id"});
       if (detailsError) alert("Invoice saved, but its additional billing details could not be saved. Check the SQL migration and access policies: " + detailsError.message);
     }
-    setInvoiceExtra({gst_mode:"inclusive",billing_from:"",billing_to:"",recipient_name:"",recipient_address:"",cover_note:"",billing_type:"fixed",work_items:[{date:"",operator:"",description:"",rate:0,minutes:0}]});
+    setInvoiceExtra({gst_mode:"exclusive",amount_mode:"automatic",manual_fees:0,billing_from:"",billing_to:"",recipient_name:"",recipient_address:"",cover_note:"",billing_type:"fixed",work_items:[{date:"",operator:"",description:"",rate:0,minutes:0}]});
     logActivity(`${editingInvoiceId ? "Updated" : "Created"} invoice ${invoiceForm.invoice_no}`, "Billing");
     setEditingInvoiceId(null);
 
@@ -2263,12 +2282,12 @@ export default function TumulLegalV4() {
 
     const details = invoiceDetails[invoice.id];
     // Existing invoices without saved details use a print-time choice.
-    let gstApplicable = details?.gst_mode === "none" ? "N" : "T";
+    let gstApplicable = details?.gst_mode === "none" ? "N" : details?.gst_mode === "exclusive" ? "E" : "T";
     if (!details) {
-      const answer = window.prompt(`GST treatment for existing invoice ${invoice.invoice_no}: T = GST included; N = no GST.`, "T");
+      const answer = window.prompt(`GST treatment for existing invoice ${invoice.invoice_no}: T = GST included; E = GST added; N = no GST.`, "T");
       if (answer === null) return;
       gstApplicable = answer.trim().toUpperCase();
-      if (gstApplicable !== "T" && gstApplicable !== "N") {alert("Enter T or N.");return;}
+      if (!["T", "E", "N"].includes(gstApplicable)) {alert("Enter T, E or N.");return;}
     }
     const escapeHtml = (value: unknown) =>
       String(value ?? "")
@@ -2299,10 +2318,9 @@ export default function TumulLegalV4() {
     const period = details?.billing_from || details?.billing_to ? `For the period ${formatDate(details.billing_from)} to ${formatDate(details.billing_to)}` : "";
     const entries = (details?.work_items || []).filter(x=>x.description?.trim());
     const entryTotal = entries.reduce((sum,x)=>sum+(Number(x.rate)||0)*(Number(x.minutes)||0)/60,0);
+    const isManualFees = details?.amount_mode === "manual";
     const entryRows = entries.map(x=>`<tr><td>${escapeHtml(formatDate(x.date))}</td><td>${escapeHtml(x.operator)}</td><td>${escapeHtml(x.description)}</td><td class="right">${safeCurrency(Number(x.rate)||0)}</td><td class="right">${escapeHtml(x.minutes)} min</td><td class="right">${safeCurrency((Number(x.rate)||0)*(Number(x.minutes)||0)/60)}</td></tr>`).join("");
-    const includeSignature = currentUserProfile.role === "Super Admin" &&
-      window.confirm("Include Mek Tumul's signature on this cover letter? Only select OK if Mek has authorised this use. Cancel prints without a signature.");
-    const signatureHtml = includeSignature ? `<img src="${escapeHtml(window.location.origin)}/mek-tumul-signature.png" alt="Mek Tumul signature" style="display:block;width:150px;height:65px;object-fit:contain;margin:6px 0"/>` : `<div style="height:55px"></div>`;
+    const signatureHtml = `<div style="height:55px"></div>`; // Signature disabled pending Mek-only server-side approval.
     const html = `<!doctype html><html><head><meta charset="utf-8" />
       <title>Tumul Legal - ${escapeHtml(reference)}</title>
       <style>
@@ -2333,7 +2351,7 @@ export default function TumulLegalV4() {
         <div class="client"><strong>${escapeHtml(invoice.client_name)}</strong>${addressHtml ? `<br/>${addressHtml}` : ""}</div>
         <p>Dear ${escapeHtml(recipient)},</p><p class="subject">Re: ${escapeHtml(description)}</p>
         ${details?.cover_note ? `<p>${escapeHtml(details.cover_note)}</p>` : ""}<p>Please find enclosed our invoice <strong>${escapeHtml(reference)}</strong> for professional legal services relating to the above matter.</p>
-        <p>Our total fees for services rendered amount to <strong>${safeCurrency(amount)}</strong>${taxable ? ", inclusive of GST" : ""}.</p>
+        <p>Our total fees for services rendered amount to <strong>${safeCurrency(amount)}</strong>${taxable ? (gstApplicable === "E" ? ", plus GST" : ", inclusive of GST") : ""}.</p>
         <p>If you have any questions concerning this invoice, please contact our office. We thank you for your continued instructions.</p>
         <div class="signature">Yours sincerely,<br/>${signatureHtml}<strong>Mek Tumul</strong><br/>Principal<br/>Tumul Legal</div>
         <div class="foot"><span>TUMUL LEGAL · PRIVATE &amp; CONFIDENTIAL</span><span>Cover Letter · ${escapeHtml(reference)}</span></div>
@@ -2363,7 +2381,7 @@ export default function TumulLegalV4() {
         ${period ? `<p class="small">${escapeHtml(period)}</p>` : ""}
         <table><thead><tr><th>Date</th><th>Operator</th><th>Work performed</th><th class="right">Rate/hr</th><th class="right">Time</th><th class="right">Value</th></tr></thead><tbody>${entryRows}</tbody></table>
         <div class="totals"><div class="grand"><span>Itemised work total</span><span>${safeCurrency(entryTotal)}</span></div><div><span>Invoice professional fees</span><span>${safeCurrency(net)}</span></div></div>
-        ${Math.abs(entryTotal-net)>0.02 ? `<p class="small"><strong>Review required:</strong> Itemised entries do not match the invoice professional fees. Verify before sending.</p>` : ""}
+        ${Math.abs(entryTotal-net)>0.02 ? `<p class="small"><strong>${isManualFees ? "Manual fee adjustment:" : "Review required:"}</strong> Itemised work differs from professional fees. ${isManualFees ? "Confirm the agreed manual fee before sending." : "Verify before sending."}</p>` : ""}
         <div class="foot"><span>TUMUL LEGAL · CONFIDENTIAL</span><span>Attachment · ${escapeHtml(reference)}</span></div>
       </section>` : ""}</body></html>`;
     const win = window.open("", "_blank", "width=1000,height=1100");
@@ -3839,14 +3857,9 @@ export default function TumulLegalV4() {
                   />
                   <input
                     type="number"
-                    value={invoiceForm.amount}
-                    onChange={(e) =>
-                      setInvoiceForm({
-                        ...invoiceForm,
-                        amount: e.target.value,
-                      })
-                    }
-                    placeholder="Amount"
+                    value={invoiceCalculatedTotal.toFixed(2)}
+                    readOnly
+                    placeholder="Invoice total (calculated)"
                     className={inputClass}
                     disabled={!permissions.addInvoice}
                   />
@@ -3917,9 +3930,22 @@ export default function TumulLegalV4() {
                   <div id="invoice-editor" className="col-span-full rounded-xl border border-white/10 p-4 space-y-3">
                     <h4 className="font-semibold text-white">{editingInvoiceId ? "Edit saved invoice" : "Official invoice details"}</h4>
                     {editingInvoiceId && <button type="button" className={secondaryButton} onClick={cancelEditingInvoice}>Cancel editing</button>}
-                    <select className={inputClass} value={invoiceExtra.gst_mode} onChange={e=>setInvoiceExtra(v=>({...v,gst_mode:e.target.value as "inclusive"|"none"}))}>
-                      <option value="inclusive">Total includes 10% GST</option><option value="none">GST not applicable</option>
+                    <select className={inputClass} value={invoiceExtra.gst_mode} onChange={e=>setInvoiceExtra(v=>({...v,gst_mode:e.target.value as "inclusive"|"exclusive"|"none"}))}>
+                      <option value="exclusive">Add GST (10%) on top of professional fees</option>
+                      <option value="inclusive">GST already included (legacy invoices)</option>
+                      <option value="none">No GST</option>
                     </select>
+                    <label className="text-xs text-slate-300">Professional fees amount</label>
+                    <select className={inputClass} value={invoiceExtra.amount_mode} onChange={e=>setInvoiceExtra(v=>({...v,amount_mode:e.target.value as "automatic"|"manual"}))}>
+                      <option value="automatic">Automatic — calculate from work entries</option>
+                      <option value="manual">Manual — enter professional fees total</option>
+                    </select>
+                    {invoiceExtra.amount_mode === "manual" && <input type="number" min="0" step="0.01" className={inputClass} placeholder="Professional fees before GST (K)" value={invoiceExtra.manual_fees || ""} onChange={e=>setInvoiceExtra(v=>({...v,manual_fees:Number(e.target.value)}))}/>}
+                    <div className="rounded-lg border border-white/10 p-3 text-sm text-slate-200 space-y-1">
+                      <div>Professional fees: {currency(invoiceExtra.gst_mode === "inclusive" ? invoiceProfessionalFees - invoiceGst : invoiceProfessionalFees)}</div>
+                      <div>GST: {currency(invoiceGst)}</div>
+                      <div className="font-semibold">Total payable: {currency(invoiceCalculatedTotal)}</div>
+                    </div>
                     <select className={inputClass} value={invoiceExtra.billing_type} onChange={e=>setInvoiceExtra(v=>({...v,billing_type:e.target.value as "fixed"|"hourly"}))}>
                       <option value="fixed">Fixed / agreed professional fee</option><option value="hourly">Time-based professional fees</option>
                     </select>
@@ -3937,8 +3963,8 @@ export default function TumulLegalV4() {
                       <input type="number" min="0" className={inputClass} placeholder="Minutes worked" value={item.minutes||""} onChange={e=>setInvoiceExtra(v=>({...v,work_items:v.work_items.map((x,i)=>i===index?{...x,minutes:Number(e.target.value)}:x)}))}/>
                     </div>)}
                     <button type="button" className={secondaryButton} onClick={()=>setInvoiceExtra(v=>({...v,work_items:[...v.work_items,{date:"",operator:"",description:"",rate:0,minutes:0}]}))}>+ Add work entry</button>
-                    {invoiceExtra.billing_type === "hourly" && <p className="text-xs text-amber-200">Itemised fees: {currency(invoiceExtra.work_items.reduce((sum,item)=>sum + (Number(item.rate)||0)*(Number(item.minutes)||0)/60,0))}. Invoice professional fees (excluding GST if inclusive): {currency(invoiceExtra.gst_mode === "inclusive" ? Number(invoiceForm.amount||0)/1.1 : Number(invoiceForm.amount||0))}. Confirm any difference before issuing.</p>}
-                    <p className="text-xs text-slate-400">For hourly work, verify that the itemised fees match the invoice amount before issuing. The existing amount field remains the official invoice total.</p>
+                    {invoiceExtra.amount_mode === "manual" && Math.abs(invoiceItemisedFees - invoiceProfessionalFees) > 0.02 && invoiceExtra.work_items.some(item=>item.description.trim()) && <p className="text-xs text-amber-200">Manual professional fees differ from itemised time entries. Confirm this adjustment with Mek before issuing.</p>}
+                    <p className="text-xs text-slate-400">Automatic mode uses rate × minutes / 60. Manual mode uses the fee you enter. GST is then applied according to the selection above.</p>
                   </div>
                   <button
                     onClick={handleAddInvoice}
@@ -4994,3 +5020,4 @@ export default function TumulLegalV4() {
     </div>
   );
 }
+
