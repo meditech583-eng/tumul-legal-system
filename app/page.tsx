@@ -345,6 +345,7 @@ export default function TumulLegalV4() {
     due_date: "",
     issued_date: "",
   });
+  const [editingInvoiceId, setEditingInvoiceId] = useState<number | null>(null);
   const [invoiceExtra, setInvoiceExtra] = useState({
     gst_mode: "inclusive" as "inclusive" | "none",
     billing_from: "", billing_to: "", recipient_name: "", recipient_address: "",
@@ -873,15 +874,16 @@ export default function TumulLegalV4() {
   ).length;
 
 
-  const overdueDeadlines = deadlines.filter(
+  const validDeadlines = deadlines.filter((deadline) => matters.some((matter) => matter.id === deadline.matter_id));
+  const overdueDeadlines = validDeadlines.filter(
     (deadline) => getDeadlineState(deadline) === "Overdue"
   ).length;
 
-  const urgentDeadlines = deadlines.filter(
+  const urgentDeadlines = validDeadlines.filter(
     (deadline) => getDeadlineState(deadline) === "Urgent"
   ).length;
 
-  const upcomingDeadlineItems = deadlines
+  const upcomingDeadlineItems = validDeadlines
     .filter((deadline) => {
       const state = getDeadlineState(deadline);
       return state === "Overdue" || state === "Urgent" || state === "Upcoming";
@@ -1529,6 +1531,30 @@ export default function TumulLegalV4() {
     await loadAllData();
   };
 
+  const startEditingInvoice = (invoice: Invoice) => {
+    if (!permissions.addInvoice) return;
+    setEditingInvoiceId(invoice.id);
+    setInvoiceForm({invoice_no:invoice.invoice_no,client_name:invoice.client_name,matter_no:invoice.matter_no,
+      amount:String(invoice.amount),amount_paid:String(invoice.amount_paid ?? 0),
+      service_description:invoice.service_description || "Legal service / professional fee",
+      status:invoice.status,due_date:invoice.due_date?.slice(0,10) || "",issued_date:invoice.issued_date?.slice(0,10) || ""});
+    const details = invoiceDetails[invoice.id];
+    setInvoiceExtra({gst_mode:details?.gst_mode || "inclusive",billing_from:details?.billing_from || "",
+      billing_to:details?.billing_to || "",recipient_name:details?.recipient_name || "",
+      recipient_address:details?.recipient_address || "",cover_note:details?.cover_note || "",
+      billing_type:details?.billing_type || "fixed",
+      work_items:details?.work_items?.length ? details.work_items : [{date:"",operator:"",description:"",rate:0,minutes:0}]});
+    document.getElementById("invoice-editor")?.scrollIntoView({behavior:"smooth",block:"start"});
+  };
+
+  const cancelEditingInvoice = () => {
+    setEditingInvoiceId(null);
+    setInvoiceForm({invoice_no:"",client_name:"",matter_no:"",amount:"",amount_paid:"",
+      service_description:"Legal service / professional fee",status:"Unpaid",due_date:"",issued_date:""});
+    setInvoiceExtra({gst_mode:"inclusive",billing_from:"",billing_to:"",recipient_name:"",recipient_address:"",
+      cover_note:"",billing_type:"fixed",work_items:[{date:"",operator:"",description:"",rate:0,minutes:0}]});
+  };
+
   const handleAddInvoice = async () => {
     if (!permissions.addInvoice) {
       alert("You do not have permission to create invoices.");
@@ -1547,9 +1573,12 @@ export default function TumulLegalV4() {
 
     const invoiceAmount = Number(invoiceForm.amount || 0);
     const paidAmount = Number(invoiceForm.amount_paid || 0);
+    if (!Number.isFinite(invoiceAmount) || invoiceAmount <= 0 || !Number.isFinite(paidAmount) || paidAmount < 0 || paidAmount > invoiceAmount) {
+      alert("Enter a valid invoice total and payment between zero and the invoice total."); return;
+    }
     const calculatedStatus = getCalculatedInvoiceStatus(invoiceAmount, paidAmount);
 
-    const { data: createdInvoice, error } = await supabase.from("invoices").insert({
+    const invoicePayload = {
       invoice_no: invoiceForm.invoice_no,
       client_name: invoiceForm.client_name,
       matter_no: invoiceForm.matter_no,
@@ -1561,7 +1590,11 @@ export default function TumulLegalV4() {
       due_date: invoiceForm.due_date || null,
       issued_date:
         invoiceForm.issued_date || new Date().toISOString().slice(0, 10),
-    }).select("id").single();
+    };
+    const invoiceWrite = editingInvoiceId
+      ? await supabase.from("invoices").update(invoicePayload).eq("id",editingInvoiceId).select("id").single()
+      : await supabase.from("invoices").insert(invoicePayload).select("id").single();
+    const {data:createdInvoice,error} = invoiceWrite;
 
     if (error) {
       alert(error.message);
@@ -1569,14 +1602,16 @@ export default function TumulLegalV4() {
     }
 
     if (createdInvoice?.id) {
-      const { error: detailsError } = await supabase.from("tumul_invoice_details").insert({
+      const detailsPayload = {
         invoice_id: createdInvoice.id,
         details: {...invoiceExtra, work_items: invoiceExtra.work_items.filter(item => item.description.trim())},
-      });
+      };
+      const { error: detailsError } = await supabase.from("tumul_invoice_details").upsert(detailsPayload,{onConflict:"invoice_id"});
       if (detailsError) alert("Invoice saved, but its additional billing details could not be saved. Check the SQL migration and access policies: " + detailsError.message);
     }
     setInvoiceExtra({gst_mode:"inclusive",billing_from:"",billing_to:"",recipient_name:"",recipient_address:"",cover_note:"",billing_type:"fixed",work_items:[{date:"",operator:"",description:"",rate:0,minutes:0}]});
-    logActivity(`Created invoice ${invoiceForm.invoice_no}`, "Billing");
+    logActivity(`${editingInvoiceId ? "Updated" : "Created"} invoice ${invoiceForm.invoice_no}`, "Billing");
+    setEditingInvoiceId(null);
 
     setInvoiceForm({
       invoice_no: "",
@@ -2265,6 +2300,9 @@ export default function TumulLegalV4() {
     const entries = (details?.work_items || []).filter(x=>x.description?.trim());
     const entryTotal = entries.reduce((sum,x)=>sum+(Number(x.rate)||0)*(Number(x.minutes)||0)/60,0);
     const entryRows = entries.map(x=>`<tr><td>${escapeHtml(formatDate(x.date))}</td><td>${escapeHtml(x.operator)}</td><td>${escapeHtml(x.description)}</td><td class="right">${safeCurrency(Number(x.rate)||0)}</td><td class="right">${escapeHtml(x.minutes)} min</td><td class="right">${safeCurrency((Number(x.rate)||0)*(Number(x.minutes)||0)/60)}</td></tr>`).join("");
+    const includeSignature = currentUserProfile.role === "Super Admin" &&
+      window.confirm("Include Mek Tumul's signature on this cover letter? Only select OK if Mek has authorised this use. Cancel prints without a signature.");
+    const signatureHtml = includeSignature ? `<img src="${escapeHtml(window.location.origin)}/mek-tumul-signature.png" alt="Mek Tumul signature" style="display:block;width:150px;height:65px;object-fit:contain;margin:6px 0"/>` : `<div style="height:55px"></div>`;
     const html = `<!doctype html><html><head><meta charset="utf-8" />
       <title>Tumul Legal - ${escapeHtml(reference)}</title>
       <style>
@@ -2297,7 +2335,7 @@ export default function TumulLegalV4() {
         ${details?.cover_note ? `<p>${escapeHtml(details.cover_note)}</p>` : ""}<p>Please find enclosed our invoice <strong>${escapeHtml(reference)}</strong> for professional legal services relating to the above matter.</p>
         <p>Our total fees for services rendered amount to <strong>${safeCurrency(amount)}</strong>${taxable ? ", inclusive of GST" : ""}.</p>
         <p>If you have any questions concerning this invoice, please contact our office. We thank you for your continued instructions.</p>
-        <div class="signature">Yours sincerely,<br/><br/><br/><strong>Mek Tumul</strong><br/>Principal<br/>Tumul Legal</div>
+        <div class="signature">Yours sincerely,<br/>${signatureHtml}<strong>Mek Tumul</strong><br/>Principal<br/>Tumul Legal</div>
         <div class="foot"><span>TUMUL LEGAL · PRIVATE &amp; CONFIDENTIAL</span><span>Cover Letter · ${escapeHtml(reference)}</span></div>
       </section>
       <section class="page">
@@ -2403,9 +2441,14 @@ export default function TumulLegalV4() {
       return;
     }
 
-    const confirmed = window.confirm(`Delete matter ${matter.matter_no}?`);
+    const confirmed = window.confirm(`Delete matter ${matter.matter_no}? Its associated deadlines and notes will also be removed. Documents and invoices must be reviewed separately. This cannot be undone.`);
     if (!confirmed) return;
 
+    // Remove dependent records first; stop rather than leaving a partially deleted matter.
+    for (const table of ["tumul_matter_deadlines", "tumul_matter_notes"]) {
+      const {error: childError} = await supabase.from(table).delete().eq("matter_id",matter.id);
+      if (childError) {alert(`Cannot delete related records from ${table}: ${childError.message}`);return;}
+    }
     const { error } = await supabase.from("matters").delete().eq("id", matter.id);
 
     if (error) {
@@ -3871,8 +3914,9 @@ export default function TumulLegalV4() {
                     className={inputClass}
                     disabled={!permissions.addInvoice}
                   />
-                  <div className="col-span-full rounded-xl border border-white/10 p-4 space-y-3">
-                    <h4 className="font-semibold text-white">Official invoice details</h4>
+                  <div id="invoice-editor" className="col-span-full rounded-xl border border-white/10 p-4 space-y-3">
+                    <h4 className="font-semibold text-white">{editingInvoiceId ? "Edit saved invoice" : "Official invoice details"}</h4>
+                    {editingInvoiceId && <button type="button" className={secondaryButton} onClick={cancelEditingInvoice}>Cancel editing</button>}
                     <select className={inputClass} value={invoiceExtra.gst_mode} onChange={e=>setInvoiceExtra(v=>({...v,gst_mode:e.target.value as "inclusive"|"none"}))}>
                       <option value="inclusive">Total includes 10% GST</option><option value="none">GST not applicable</option>
                     </select>
@@ -3893,6 +3937,7 @@ export default function TumulLegalV4() {
                       <input type="number" min="0" className={inputClass} placeholder="Minutes worked" value={item.minutes||""} onChange={e=>setInvoiceExtra(v=>({...v,work_items:v.work_items.map((x,i)=>i===index?{...x,minutes:Number(e.target.value)}:x)}))}/>
                     </div>)}
                     <button type="button" className={secondaryButton} onClick={()=>setInvoiceExtra(v=>({...v,work_items:[...v.work_items,{date:"",operator:"",description:"",rate:0,minutes:0}]}))}>+ Add work entry</button>
+                    {invoiceExtra.billing_type === "hourly" && <p className="text-xs text-amber-200">Itemised fees: {currency(invoiceExtra.work_items.reduce((sum,item)=>sum + (Number(item.rate)||0)*(Number(item.minutes)||0)/60,0))}. Invoice professional fees (excluding GST if inclusive): {currency(invoiceExtra.gst_mode === "inclusive" ? Number(invoiceForm.amount||0)/1.1 : Number(invoiceForm.amount||0))}. Confirm any difference before issuing.</p>}
                     <p className="text-xs text-slate-400">For hourly work, verify that the itemised fees match the invoice amount before issuing. The existing amount field remains the official invoice total.</p>
                   </div>
                   <button
@@ -3900,7 +3945,7 @@ export default function TumulLegalV4() {
                     disabled={!permissions.addInvoice}
                     className={`w-full ${permissions.addInvoice ? primaryButton : secondaryButton}`}
                   >
-                    {permissions.addInvoice ? "Save Invoice" : "Read Only Access"}
+                    {permissions.addInvoice ? (editingInvoiceId ? "Save Changes" : "Save Invoice") : "Read Only Access"}
                   </button>
                 </div>
               </div>
@@ -4024,6 +4069,7 @@ export default function TumulLegalV4() {
                           </td>
                           <td className="px-3 py-4 no-print">
                             <div className="flex flex-wrap gap-2">
+                              {permissions.addInvoice && <button onClick={() => startEditingInvoice(invoice)} className="rounded-2xl border border-sky-400/30 bg-sky-400/10 px-4 py-2 text-xs font-semibold text-sky-200">Edit</button>}
                               <button
                                 onClick={() => handleUpdateInvoicePayment(invoice)}
                                 className="rounded-2xl border border-emerald-400/30 bg-emerald-400/10 px-4 py-2 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-400/20"
