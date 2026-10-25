@@ -2317,7 +2317,9 @@ export default function TumulLegalV4() {
     const amount = Number(invoice.amount || 0);
     const paid = Number(invoice.amount_paid || 0);
     const balance = Math.max(0, amount - paid);
-    const taxable = gstApplicable === "T";
+    const taxable = gstApplicable === "T" || gstApplicable === "E";
+    // The invoices.amount column stores the final payable total. Both GST-inclusive
+    // and GST-added invoices therefore derive their pre-GST fee from that total.
     const net = taxable ? Math.round((amount / 1.1) * 100) / 100 : amount;
     const gst = taxable ? Math.round((amount - net) * 100) / 100 : 0;
     const description = invoice.service_description || "Professional legal services";
@@ -2364,7 +2366,7 @@ export default function TumulLegalV4() {
         <div class="client"><strong>${escapeHtml(invoice.client_name)}</strong>${addressHtml ? `<br/>${addressHtml}` : ""}</div>
         <p>Dear ${escapeHtml(recipient)},</p><p class="subject">Re: ${escapeHtml(description)}</p>
         ${details?.cover_note ? `<p>${escapeHtml(details.cover_note)}</p>` : ""}<p>Please find enclosed our invoice <strong>${escapeHtml(reference)}</strong> for professional legal services relating to the above matter.</p>
-        <p>Our total fees for services rendered amount to <strong>${safeCurrency(amount)}</strong>${taxable ? (gstApplicable === "E" ? ", plus GST" : ", inclusive of GST") : ""}.</p>
+        <p>Our total fees for services rendered amount to <strong>${safeCurrency(amount)}</strong>${taxable ? ", including GST" : ""}.</p>
         <p>If you have any questions concerning this invoice, please contact our office. We thank you for your continued instructions.</p>
         <div class="signature">Yours sincerely,<br/>${signatureHtml}<strong>Mek Tumul</strong><br/>Principal<br/>Tumul Legal</div>
         <div class="foot"><span>TUMUL LEGAL · PRIVATE &amp; CONFIDENTIAL</span><span>Cover Letter · ${escapeHtml(reference)}</span></div>
