@@ -1610,19 +1610,32 @@ export default function TumulLegalV4() {
       issued_date:
         invoiceForm.issued_date || new Date().toISOString().slice(0, 10),
     };
-    const invoiceWrite = editingInvoiceId
-      ? await supabase.from("invoices").update(invoicePayload).eq("id",editingInvoiceId).select("id").single()
-      : await supabase.from("invoices").insert(invoicePayload).select("id").single();
-    const {data:createdInvoice,error} = invoiceWrite;
-
-    if (error) {
-      alert(error.message);
-      return;
+    // Do not coerce UPDATE results to a single object: RLS can return zero rows.
+    // Check the affected row count before claiming the invoice was saved.
+    let savedInvoiceId: number;
+    if (editingInvoiceId !== null) {
+      const { data: updatedRows, error: updateError } = await supabase
+        .from("invoices").update(invoicePayload).eq("id", editingInvoiceId).select("id");
+      if (updateError) { alert("Unable to update invoice: " + updateError.message); return; }
+      if (!updatedRows || updatedRows.length !== 1) {
+        alert("Invoice update could not be confirmed. Check the invoices table RLS UPDATE and SELECT policies for your account. No success was recorded.");
+        return;
+      }
+      savedInvoiceId = updatedRows[0].id;
+    } else {
+      const { data: insertedRows, error: insertError } = await supabase
+        .from("invoices").insert(invoicePayload).select("id");
+      if (insertError) { alert("Unable to create invoice: " + insertError.message); return; }
+      if (!insertedRows || insertedRows.length !== 1) {
+        alert("Invoice creation could not be confirmed. Check the invoices table INSERT and SELECT policies before retrying to avoid duplicates.");
+        return;
+      }
+      savedInvoiceId = insertedRows[0].id;
     }
 
-    if (createdInvoice?.id) {
+    if (savedInvoiceId) {
       const detailsPayload = {
-        invoice_id: createdInvoice.id,
+        invoice_id: savedInvoiceId,
         details: {...invoiceExtra, work_items: invoiceExtra.work_items.filter(item => item.description.trim())},
       };
       const { error: detailsError } = await supabase.from("tumul_invoice_details").upsert(detailsPayload,{onConflict:"invoice_id"});
@@ -5020,4 +5033,3 @@ export default function TumulLegalV4() {
     </div>
   );
 }
-
